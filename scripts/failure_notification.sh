@@ -18,6 +18,9 @@ ERROR_MESSAGE+="- SharePoint connectivity<br>"
 ERROR_MESSAGE+="- Invalid diagram files<br><br>"
 ERROR_MESSAGE+="Please check the [workflow logs](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) for details."
 
+# Escape special characters in message to avoid JSON issues
+ERROR_MESSAGE=$(echo "$ERROR_MESSAGE" | sed 's/"/\\"/g')
+
 # Send notification
 ./scripts/send_teams_notification.sh \
   "$WEBHOOK_URL" \

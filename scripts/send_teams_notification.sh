@@ -45,49 +45,46 @@ send_teams_notification() {
     local current_time=$(date '+%H:%M:%S')
     
     # Create the payload for Teams webhook with richer formatting
-    local payload=$(cat <<EOF
-{
+    local payload='{
   "@type": "MessageCard",
   "@context": "http://schema.org/extensions",
-  "themeColor": "${color}",
-  "summary": "${title}",
+  "themeColor": "'${color}'",
+  "summary": "'${title}'",
   "sections": [
     {
-      "activityTitle": "${title}",
-      "activitySubtitle": "${subtitle}",
+      "activityTitle": "'${title}'",
+      "activitySubtitle": "'${subtitle}'",
       "activityImage": "https://raw.githubusercontent.com/jgraph/drawio-desktop/master/build/icon.png",
       "facts": [
         {
           "name": "Date",
-          "value": "${current_date}"
+          "value": "'${current_date}'"
         },
         {
           "name": "Time",
-          "value": "${current_time}"
+          "value": "'${current_time}'"
         },
         {
           "name": "Repository",
-          "value": "${repository}"
+          "value": "'${repository}'"
         },
         {
           "name": "Commit",
-          "value": "${commit_display}"
+          "value": "'${commit_display}'"
         },
         {
           "name": "Workflow",
-          "value": "${workflow}"
+          "value": "'${workflow}'"
         }
       ],
       "markdown": true,
-      "text": "${message}"
+      "text": "'${message}'"
     }
-  ]
-EOF
+  ]'
 
     # Add potentialAction if run_id is provided
     if [[ -n "$workflow_run_url" ]]; then
-        payload+=$(cat <<EOF
-,
+        payload+=',
   "potentialAction": [
     {
       "@type": "OpenUri",
@@ -95,20 +92,16 @@ EOF
       "targets": [
         {
           "os": "default",
-          "uri": "${workflow_run_url}"
+          "uri": "'${workflow_run_url}'"
         }
       ]
     }
-  ]
-EOF
-    )
+  ]'
     fi
 
     # Close the JSON payload
-    payload+=$(cat <<EOF
-}
-EOF
-    )
+    payload+='
+}'
     
     echo "Sending Teams notification with webhook URL (partial): ${webhook_url:0:15}..."
     
@@ -120,9 +113,17 @@ EOF
     while [[ $retry -lt $max_retries && "$success" != "true" ]]; do
         echo "Attempt $((retry+1)) to send Teams notification..."
         
-        local response=$(curl -s -w "\n%{http_code}" -H "Content-Type: application/json" -d "$payload" "$webhook_url")
+        # Write payload to a temp file to avoid string interpolation issues
+        local temp_payload_file=$(mktemp)
+        echo "$payload" > "$temp_payload_file"
+        
+        # Use the file for the curl command
+        local response=$(curl -s -w "\n%{http_code}" -H "Content-Type: application/json" --data-binary "@$temp_payload_file" "$webhook_url")
         local http_code=$(echo "$response" | tail -n1)
         local response_body=$(echo "$response" | sed '$d')
+        
+        # Clean up
+        rm -f "$temp_payload_file"
         
         if [[ "$http_code" == "200" ]]; then
             echo "✅ Teams notification sent successfully (HTTP 200)"

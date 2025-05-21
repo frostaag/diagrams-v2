@@ -27,6 +27,9 @@ else
   MESSAGE+="Workflow completed successfully, but no diagrams were processed."
 fi
 
+# Escape special characters in message to avoid JSON issues
+MESSAGE=$(echo "$MESSAGE" | sed 's/"/\\"/g')
+
 # Send notification
 ./scripts/send_teams_notification.sh \
   "$WEBHOOK_URL" \

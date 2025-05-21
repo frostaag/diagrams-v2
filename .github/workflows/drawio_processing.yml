@@ -47,9 +47,9 @@ jobs:
           sudo apt-get update
           
           # Install dependencies required for headless operation
-          sudo apt-get install -y wget xvfb libasound2 libgbm1 libnspr4 libnss3 libxss1 \
-            libxtst6 libgtk-3-0 libx11-xcb1 libdrm2 libgbm1 libnss3 libxss1 libx11-xcb1 \
-            libasound2 libatk-bridge2.0-0
+          sudo apt-get install -y wget xvfb libgbm1 libnspr4 libnss3 libxss1 \
+            libxtst6 libgtk-3-0 libx11-xcb1 libdrm2 \
+            libatk-bridge2.0-0 libsecret-1-0
           
           # Download DrawIO with retry logic
           MAX_RETRIES=3
