@@ -26,6 +26,7 @@ env:
   # SharePoint configuration
   DIAGRAMS_SHAREPOINT_FOLDER: "Diagrams"
   DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME: "Diagrams_Changelog.csv"
+  DIAGRAMS_SHAREPOINT_URL: "https://frostaag.sharepoint.com/sites/Diagrams"
   
   # Teams notification configuration
   DIAGRAMS_TEAMS_NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
@@ -222,6 +223,7 @@ jobs:
             echo "::warning::  - DIAGRAMS_SHAREPOINT_CLIENTSECRET (secret)"
             echo "::warning::  - DIAGRAMS_SHAREPOINT_TENANT_ID (variable)" 
             echo "::warning::  - DIAGRAMS_SHAREPOINT_SITE_ID (variable)"
+            echo "::warning::  - DIAGRAMS_SHAREPOINT_URL (variable)"
           else
             echo "SharePoint upload completed successfully."
           fi
@@ -230,7 +232,8 @@ jobs:
           SHAREPOINT_CLIENT_SECRET: ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENTSECRET }}
           SHAREPOINT_TENANT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_TENANT_ID }}
           SHAREPOINT_SITE_ID: ${{ vars.DIAGRAMS_SHAREPOINT_SITE_ID }}
-          SHAREPOINT_FOLDER: ${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}
+          SHAREPOINT_URL: ${{ vars.DIAGRAMS_SHAREPOINT_URL }}
+          SHAREPOINT_FOLDER: "Shared Documents/${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}"
           SHAREPOINT_OUTPUT_FILENAME: ${{ env.DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME }}
           CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
 

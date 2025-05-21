@@ -29,6 +29,12 @@ if [[ -z "$SHAREPOINT_SITE_ID" ]]; then
   exit 1
 fi
 
+# Check if we have a custom SharePoint URL defined
+CUSTOM_SHAREPOINT_URL="${SHAREPOINT_URL:-}"
+if [[ -n "$CUSTOM_SHAREPOINT_URL" ]]; then
+  echo "Using custom SharePoint URL: $CUSTOM_SHAREPOINT_URL"
+fi
+
 # Function to get access token
 get_access_token() {
   local token_url="https://login.microsoftonline.com/${SHAREPOINT_TENANT_ID}/oauth2/v2.0/token"
@@ -110,11 +116,17 @@ upload_to_sharepoint() {
   
   # Extract company domain from site ID or use default
   local sharepoint_domain=""
-  if [[ "$SHAREPOINT_SITE_ID" =~ ([a-zA-Z0-9_-]+)\.sharepoint\.com ]]; then
+  
+  # First try to get domain from custom URL if available
+  if [[ -n "$CUSTOM_SHAREPOINT_URL" && "$CUSTOM_SHAREPOINT_URL" =~ ([a-zA-Z0-9_-]+\.sharepoint\.com) ]]; then
+    sharepoint_domain="${BASH_REMATCH[1]}"
+    echo "Extracted SharePoint domain from custom URL: $sharepoint_domain"
+  # Otherwise try to extract from site ID
+  elif [[ "$SHAREPOINT_SITE_ID" =~ ([a-zA-Z0-9_-]+)\.sharepoint\.com ]]; then
     sharepoint_domain="${BASH_REMATCH[1]}.sharepoint.com"
-    echo "Extracted SharePoint domain: $sharepoint_domain"
+    echo "Extracted SharePoint domain from site ID: $sharepoint_domain"
   else
-    # Default domain if not found in SITE_ID
+    # Default domain if not found in SITE_ID or custom URL
     sharepoint_domain="frostaag.sharepoint.com"
     echo "Using default SharePoint domain: $sharepoint_domain"
   fi
@@ -125,6 +137,28 @@ upload_to_sharepoint() {
   # Test site with multiple formats
   local site_formats=(
     "https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}"
+  )
+  
+  # Add custom URL format if provided
+  if [[ -n "$CUSTOM_SHAREPOINT_URL" ]]; then
+    # Extract domain from custom URL
+    if [[ "$CUSTOM_SHAREPOINT_URL" =~ ([a-zA-Z0-9_-]+\.sharepoint\.com) ]]; then
+      local extracted_domain="${BASH_REMATCH[1]}"
+      echo "Extracted domain from custom URL: $extracted_domain"
+      
+      # Add formats using the custom URL
+      site_formats+=(
+        "https://graph.microsoft.com/v1.0/sites/${extracted_domain}:/sites/Diagrams"
+        "https://graph.microsoft.com/v1.0/sites/${extracted_domain}:${CUSTOM_SHAREPOINT_URL#*${extracted_domain}}"
+      )
+    fi
+    
+    # Add direct format using custom URL
+    site_formats+=("https://graph.microsoft.com/v1.0/sites/${CUSTOM_SHAREPOINT_URL#https://}")
+  fi
+  
+  # Add fallback formats
+  site_formats+=(
     "https://graph.microsoft.com/v1.0/sites/${sharepoint_domain}:/sites/${SHAREPOINT_SITE_ID#*/sites/}"
     "https://graph.microsoft.com/v1.0/sites/${sharepoint_domain}"
     "https://graph.microsoft.com/v1.0/sites/frostaag.sharepoint.com:/sites/Diagrams"
@@ -146,6 +180,10 @@ upload_to_sharepoint() {
   
   for format in "${site_formats[@]}"; do
     echo "Trying site format: $format"
+    
+    # Debug request
+    echo "curl -X GET \"$format\" -H \"Authorization: Bearer [TOKEN]\" -H \"Accept: application/json\""
+    
     local site_response=$(curl -s -X GET "$format" \
       -H "Authorization: Bearer $access_token" \
       -H "Accept: application/json")
@@ -180,6 +218,9 @@ upload_to_sharepoint() {
   
   # Construct upload URL from successful site format
   local drive_path="${site_url}/drive/root:/${destination}/${OUTPUT_FILENAME}:/content"
+  
+  # Debug the final upload URL
+  echo "Final upload URL: ${drive_path}"
   
   echo "Uploading to SharePoint: ${destination}/${OUTPUT_FILENAME}"
   echo "Using API endpoint: $drive_path"
