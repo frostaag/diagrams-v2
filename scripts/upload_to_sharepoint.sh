@@ -38,10 +38,16 @@ fi
 # Function to get access token
 get_access_token() {
   local token_url="https://login.microsoftonline.com/${SHAREPOINT_TENANT_ID}/oauth2/v2.0/token"
+  
+  # Microsoft Graph API requires specific scopes - we're using .default which includes all granted permissions
   local scope="https://graph.microsoft.com/.default"
   
+  echo "=================== AUTHENTICATION DEBUG ==================="
   echo "Getting access token from: $token_url"
   echo "Using client ID: ${SHAREPOINT_CLIENT_ID:0:6}... (truncated for security)"
+  echo "Tenant ID: ${SHAREPOINT_TENANT_ID}"
+  echo "Requested scope: $scope"
+  echo "============================================================"
   
   # Try multiple times to get token in case of transient issues
   local max_retries=3
@@ -51,34 +57,71 @@ get_access_token() {
   while [[ $retry -lt $max_retries && -z "$access_token" ]]; do
     echo "Attempt $((retry+1)) to get access token..."
     
-    local response=$(curl -s -X POST "$token_url" \
+    # Add verbose flag to see connection details without exposing sensitive data
+    echo "POST request to token endpoint with scope $scope"
+    
+    local response=$(curl -v -s -X POST "$token_url" \
       -H "Content-Type: application/x-www-form-urlencoded" \
-      -d "client_id=${SHAREPOINT_CLIENT_ID}&scope=${scope}&client_secret=${SHAREPOINT_CLIENT_SECRET}&grant_type=client_credentials")
+      -d "client_id=${SHAREPOINT_CLIENT_ID}&scope=${scope}&client_secret=${SHAREPOINT_CLIENT_SECRET}&grant_type=client_credentials" 2>&1)
     
     # Extract token with more robust parsing
     if [[ "$response" == *"access_token"* ]]; then
       access_token=$(echo "$response" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
       if [[ -n "$access_token" ]]; then
-        echo "Access token obtained successfully."
+        echo "✅ Access token obtained successfully."
+        echo "Token length: ${#access_token} characters"
+        echo "First few characters: ${access_token:0:10}..."
         break
       fi
     fi
     
-    echo "Failed to get access token on attempt $((retry+1))"
+    # Detailed error handling and diagnostics
+    echo "❌ Failed to get access token on attempt $((retry+1))"
+    
+    # Check for specific error patterns
     if [[ "$response" == *"error"* ]]; then
       local error_code=$(echo "$response" | grep -o '"error":"[^"]*' | cut -d'"' -f4)
-      local error_desc=$(echo "$response" | grep -o '"error_description":"[^"]*' | cut -d'"' -f4)
+      local error_desc=$(echo "$response" | grep -o '"error_description":"[^"]*' | cut -d'"' -f4 || echo "No detailed description")
       echo "Error code: $error_code"
       echo "Error description: $error_desc"
+      
+      # Add specific troubleshooting guidance based on error code
+      case "$error_code" in
+        "invalid_client")
+          echo "🔑 AUTHENTICATION ERROR: Client ID or secret is incorrect."
+          echo "Please verify your SHAREPOINT_CLIENT_ID and SHAREPOINT_CLIENT_SECRET values."
+          echo "Make sure the client secret hasn't expired in Azure Portal."
+          ;;
+        "invalid_request")
+          echo "🔑 INVALID REQUEST: Missing or malformed parameters."
+          echo "Check tenant ID and API permissions in Azure Portal."
+          ;;
+        "unauthorized_client")
+          echo "🔑 UNAUTHORIZED CLIENT: The application lacks proper permissions."
+          echo "Ensure API permissions are granted in Azure Portal admin center."
+          ;;
+        *)
+          echo "Please review the error details above."
+          ;;
+      esac
     else
-      echo "Unexpected response: $response"
+      echo "Unexpected response or connection error. Full response (sensitive data removed):"
+      # Print response but remove any potential secrets
+      echo "$response" | grep -v "client_secret" | grep -v "access_token"
     fi
     
     retry=$((retry+1))
     
     if [[ $retry -lt $max_retries ]]; then
-      echo "Retrying in 3 seconds..."
-      sleep 3
+      local wait_time=$((5 * retry))
+      echo "Retrying in $wait_time seconds (attempt $retry of $max_retries)..."
+      sleep $wait_time
+      
+      # Verify the environment variables again before retry
+      echo "Retrying with:"
+      echo "- Client ID length: ${#SHAREPOINT_CLIENT_ID} characters"
+      echo "- Client Secret length: ${#SHAREPOINT_CLIENT_SECRET} characters" 
+      echo "- Tenant ID: $SHAREPOINT_TENANT_ID"
     fi
   done
   
@@ -143,16 +186,17 @@ upload_to_sharepoint() {
   echo "Tenant ID: ${SHAREPOINT_TENANT_ID}"
   echo "============================================"
   
-  # URLs to test - prioritizing formats that worked in Postman tests
+  # URLs to test - simplifying to focus on the formats that worked in your Postman tests
+  # We'll try fewer formats but with more verbose debugging
   local site_formats=(
-    # Host-relative format with site name - confirmed working in your tests
-    "https://graph.microsoft.com/v1.0/sites/${sharepoint_domain}:/sites/DatasphereFileConnector"
-    
-    # Direct site ID format - confirmed working with specific ID format
+    # Direct site ID format with just the GUID - most reliable approach
     "https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}"
     
-    # Full site ID format with three-part structure - worked in your tests
-    "https://graph.microsoft.com/v1.0/sites/${sharepoint_domain},${SHAREPOINT_SITE_ID},bd3be67d-8b49-4817-835d-b1673da4c2b0"
+    # Site path format - works when site structure is standard
+    "https://graph.microsoft.com/v1.0/sites/${sharepoint_domain}:/sites/DatasphereFileConnector"
+    
+    # Alternate site path format without colon
+    "https://graph.microsoft.com/v1.0/sites/${sharepoint_domain}/sites/DatasphereFileConnector"
   )
   
   # Add custom URL format if provided
@@ -231,34 +275,87 @@ upload_to_sharepoint() {
   fi
   
   # Now try with Graph API formats
+  echo "=============== TESTING SITE ACCESS FORMATS ==============="
+  echo "Access token status: $([ -n "$access_token" ] && echo "✅ Present (${#access_token} characters)" || echo "❌ Missing")"
+  echo "============================================================"
+  
   for format in "${site_formats[@]}"; do
-    echo "Trying site format: $format"
+    echo "🔍 Trying site format: $format"
     
-    # Debug request
-    echo "curl -X GET \"$format\" -H \"Authorization: Bearer [TOKEN]\" -H \"Accept: application/json\""
+    # Show first part of token for debugging (just characters, not full value)
+    echo "  Using token: ${access_token:0:5}...[truncated]"
     
-    local site_response=$(curl -s -X GET "$format" \
+    # Use -v flag to see detailed HTTP transaction but hide from normal output
+    echo "  Sending request with curl..."
+    
+    # Capture full verbose output to check for TLS/SSL or networking issues
+    local verbose_output=$(curl -v -s -X GET "$format" \
       -H "Authorization: Bearer $access_token" \
-      -H "Accept: application/json")
+      -H "Accept: application/json" 2>&1)
+      
+    # Capture just the response body for processing
+    local site_response=$(echo "$verbose_output" | grep -v "^*" | grep -v "^>" | grep -v "^<" | grep -v "}" | grep -v "{" || echo "{}")
     
+    # Check for successful response that contains an ID
     if echo "$site_response" | grep -q '"id"'; then
-      echo "✅ Success with format: $format"
+      echo "✅ SUCCESS: Connected to SharePoint site with format: $format"
       site_url="$format"
       site_info="$site_response"
       
       # Extract the full site ID for future reference
-      local full_site_id=$(echo "$site_response" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-      echo "📝 Full site ID from response: $full_site_id"
-      echo "For future reference, this is the complete SharePoint site ID"
+      local full_site_id=$(echo "$site_response" | grep -o '"id":"[^"]*' | cut -d'"' -f4 || echo "Unknown")
+      local site_name=$(echo "$site_response" | grep -o '"name":"[^"]*' | cut -d'"' -f4 || echo "Unknown")
+      local site_web_url=$(echo "$site_response" | grep -o '"webUrl":"[^"]*' | cut -d'"' -f4 || echo "Unknown")
+      
+      echo "📝 SUCCESSFUL CONNECTION:"
+      echo "  - Site name: $site_name"
+      echo "  - Web URL: $site_web_url" 
+      echo "  - Full site ID from response: $full_site_id"
+      echo "  - WORKING FORMAT: $format"
+      echo "For future reference, use this format in your configuration."
+      
+      # Save the working format to a file for easy reference
+      echo "$format" > /tmp/working_sharepoint_format.txt
       
       break
     else
       echo "❌ Failed with format: $format"
+      
+      # Look for specific error indicators
       if echo "$site_response" | grep -q "error"; then
-        local error_code=$(echo "$site_response" | grep -o '"code":"[^"]*' | cut -d'"' -f4)
-        local error_message=$(echo "$site_response" | grep -o '"message":"[^"]*' | cut -d'"' -f4)
-        echo "Error code: $error_code"
-        echo "Error message: $error_message"
+        local error_code=$(echo "$site_response" | grep -o '"code":"[^"]*' | cut -d'"' -f4 || echo "Unknown")
+        local error_message=$(echo "$site_response" | grep -o '"message":"[^"]*' | cut -d'"' -f4 || echo "No specific message")
+        echo "  - Error code: $error_code"
+        echo "  - Error message: $error_message"
+        
+        # Check for common authentication/authorization errors
+        case "$error_code" in
+          "InvalidAuthenticationToken"|"AuthenticationFailed")
+            echo "  ⚠️ AUTHENTICATION ERROR: The access token is invalid or expired."
+            echo "  Check your client ID and secret in Azure Portal."
+            ;;
+          "AccessDenied")
+            echo "  ⚠️ ACCESS DENIED: The app has insufficient permissions."
+            echo "  Grant Sites.Read.All and Sites.ReadWrite.All in Azure Portal."
+            ;;
+          "itemNotFound"|"ResourceNotFound")
+            echo "  ⚠️ SITE NOT FOUND: The site ID or path doesn't exist or is inaccessible."
+            echo "  Verify that the site exists and your app has access to it."
+            ;;
+          *)
+            echo "  ⚠️ Request failed with error code: $error_code"
+            ;;
+        esac
+      else
+        # Check for network or TLS issues in verbose output
+        if echo "$verbose_output" | grep -q "SSL\|TLS\|certificate\|connect\|lookup"; then
+          echo "  ⚠️ Network or TLS error detected. Check connectivity to Microsoft Graph API."
+          echo "  Details from connection attempt:"
+          echo "$verbose_output" | grep "SSL\|TLS\|certificate\|connect\|lookup" | head -5
+        else 
+          echo "  ⚠️ Unexpected response format. Response may be empty or malformed."
+          echo "  First part of response: ${site_response:0:100}..."
+        fi
       fi
     fi
   done

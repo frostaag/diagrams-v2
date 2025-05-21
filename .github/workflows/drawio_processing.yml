@@ -27,6 +27,8 @@ env:
   DIAGRAMS_SHAREPOINT_FOLDER: "Diagrams"
   DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME: "Diagrams_Changelog.csv"
   DIAGRAMS_SHAREPOINT_URL: "https://frostaag.sharepoint.com/sites/DatasphereFileConnector"
+  # Use direct formats that worked in testing
+  DIAGRAMS_SHAREPOINT_SITE_FORMAT: "e39939c2-992f-47cc-8b32-20aa466d71f4"
   
   # Teams notification configuration
   DIAGRAMS_TEAMS_NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
@@ -217,17 +219,39 @@ jobs:
         run: |
           # Print variables for debugging (safe values only, no secrets)
           echo "=== SHAREPOINT CONFIGURATION ==="
-          echo "CLIENT_ID: ${SHAREPOINT_CLIENT_ID:0:6}... (truncated)"
           echo "TENANT_ID: ${SHAREPOINT_TENANT_ID}"
           echo "SITE_ID: ${SHAREPOINT_SITE_ID}"
           echo "URL: ${SHAREPOINT_URL}"
           echo "FOLDER: ${SHAREPOINT_FOLDER}"
           echo "OUTPUT_FILENAME: ${SHAREPOINT_OUTPUT_FILENAME}"
           
-          # Debug information for SharePoint connectivity
-          echo "Available SharePoint formats:"
-          echo "1. frostaag.sharepoint.com:/sites/DatasphereFileConnector (site path format)"
-          echo "2. e39939c2-992f-47cc-8b32-20aa466d71f4 (direct site ID format)"
+          # Verify essential credentials are present
+          CREDENTIAL_ISSUES=false
+          if [ -z "$SHAREPOINT_CLIENT_ID" ]; then
+            echo "❌ ERROR: SHAREPOINT_CLIENT_ID is not set"
+            CREDENTIAL_ISSUES=true
+          else
+            echo "✅ SHAREPOINT_CLIENT_ID is set (${#SHAREPOINT_CLIENT_ID} characters)"
+          fi
+          
+          if [ -z "$SHAREPOINT_CLIENT_SECRET" ]; then
+            echo "❌ ERROR: SHAREPOINT_CLIENT_SECRET is not set"
+            CREDENTIAL_ISSUES=true
+          else
+            echo "✅ SHAREPOINT_CLIENT_SECRET is set (${#SHAREPOINT_CLIENT_SECRET} characters)"
+          fi
+          
+          if [ -z "$SHAREPOINT_TENANT_ID" ]; then
+            echo "❌ ERROR: SHAREPOINT_TENANT_ID is not set"
+            CREDENTIAL_ISSUES=true
+          else
+            echo "✅ SHAREPOINT_TENANT_ID is set: $SHAREPOINT_TENANT_ID"
+          fi
+          
+          if [ "$CREDENTIAL_ISSUES" = "true" ]; then
+            echo "⚠️ Some credentials are missing. SharePoint upload will likely fail."
+          fi
+          
           echo "==============================="
           
           echo "Attempting to upload to SharePoint..."
