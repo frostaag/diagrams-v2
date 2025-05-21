@@ -242,8 +242,8 @@ jobs:
           else
             echo "::warning::Teams webhook URL not configured. Skipping notification."
           fi
+          
+          echo "::error::The Draw.io processing workflow failed. Check the logs for details."
         env:
           # Use an environment variable to control if this step runs at all
           TEAMS_NOTIFICATIONS_ENABLED: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK != '' }}
-          
-          echo "::error::The Draw.io processing workflow failed. Check the logs for details."
