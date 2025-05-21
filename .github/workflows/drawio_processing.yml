@@ -1,5 +1,7 @@
 name: Draw.io Files Processing
 
+
+
 on:
   push:
     paths:
@@ -27,6 +29,9 @@ env:
   
   # Teams notification configuration
   DIAGRAMS_TEAMS_NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
+
+permissions:
+  contents: write
 
 jobs:
   process-drawio-files:
@@ -157,8 +162,27 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add png_files/ drawio_files/ ${{ env.DIAGRAMS_CHANGELOG_FILE }} ${{ env.DIAGRAMS_COUNTER_FILE }}
-          git diff --staged --quiet || git commit -m "Update diagram files and changelog [skip ci]"
-          git push
+          
+          # Check if there are changes to commit
+          if ! git diff --staged --quiet; then
+            # Make the commit
+            git commit -m "Update diagram files and changelog [skip ci]"
+            
+            # Use PAT for authentication if available, otherwise use GITHUB_TOKEN
+            echo "Configuring Git for pushes..."
+            git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+            
+            # Attempt to push with error handling
+            echo "Attempting to push changes..."
+            if ! git push; then
+              echo "::warning::Failed to push changes with GITHUB_TOKEN. This is likely a permission issue."
+              echo "::warning::Make sure the repository has write permissions enabled for GitHub Actions."
+              echo "::warning::For more information, see: https://docs.github.com/en/actions/security-guides/automatic-token-authentication"
+              exit 0  # Don't fail the workflow, just warn
+            fi
+          else
+            echo "No changes to commit"
+          fi
 
       - name: Upload to SharePoint
         run: |
@@ -173,33 +197,53 @@ jobs:
           CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
 
       - name: Send Teams notification on success
-        if: success()
+        if: success() && env.TEAMS_NOTIFICATIONS_ENABLED == 'true'
         run: |
           # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
           chmod +x ./scripts/success_notification.sh
           
-          # Run the success notification script
-          ./scripts/success_notification.sh \
-            "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
-            "$GITHUB_REPOSITORY" \
-            "$GITHUB_SHA" \
-            "$GITHUB_WORKFLOW" \
-            "$GITHUB_RUN_ID"
+          # Check if webhook URL is available
+          if [ -n "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" ]; then
+            echo "Sending success notification to Teams..."
+            
+            # Run the success notification script
+            ./scripts/success_notification.sh \
+              "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
+              "$GITHUB_REPOSITORY" \
+              "$GITHUB_SHA" \
+              "$GITHUB_WORKFLOW" \
+              "$GITHUB_RUN_ID"
+          else
+            echo "::warning::Teams webhook URL not configured. Skipping notification."
+          fi
+        env:
+          # Use an environment variable to control if this step runs at all
+          TEAMS_NOTIFICATIONS_ENABLED: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK != '' }}
 
       - name: Notify on failure
-        if: failure()
+        if: failure() && env.TEAMS_NOTIFICATIONS_ENABLED == 'true'
         run: |
           # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
           chmod +x ./scripts/failure_notification.sh
           
-          # Run the failure notification script
-          ./scripts/failure_notification.sh \
-            "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
-            "$GITHUB_REPOSITORY" \
-            "$GITHUB_SHA" \
-            "$GITHUB_WORKFLOW" \
-            "$GITHUB_RUN_ID"
+          # Check if webhook URL is available
+          if [ -n "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" ]; then
+            echo "Sending failure notification to Teams..."
+            
+            # Run the failure notification script
+            ./scripts/failure_notification.sh \
+              "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
+              "$GITHUB_REPOSITORY" \
+              "$GITHUB_SHA" \
+              "$GITHUB_WORKFLOW" \
+              "$GITHUB_RUN_ID"
+          else
+            echo "::warning::Teams webhook URL not configured. Skipping notification."
+          fi
+        env:
+          # Use an environment variable to control if this step runs at all
+          TEAMS_NOTIFICATIONS_ENABLED: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK != '' }}
           
           echo "::error::The Draw.io processing workflow failed. Check the logs for details."

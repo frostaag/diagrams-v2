@@ -4,10 +4,16 @@
 
 # Get parameters from environment
 WEBHOOK_URL="$1"
-GITHUB_REPOSITORY="$2"
-GITHUB_SHA="$3"
-GITHUB_WORKFLOW="$4"
-GITHUB_RUN_ID="$5"
+GITHUB_REPOSITORY="${2:-Unknown}"
+GITHUB_SHA="${3:-Unknown}"
+GITHUB_WORKFLOW="${4:-Unknown}"
+GITHUB_RUN_ID="${5:-Unknown}"
+
+# Validate webhook URL
+if [[ -z "$WEBHOOK_URL" ]]; then
+    echo "Warning: No Teams webhook URL provided. Notification will not be sent."
+    exit 0
+fi
 
 # Create failure message
 ERROR_MESSAGE="The Draw.io processing workflow failed.<br><br>"

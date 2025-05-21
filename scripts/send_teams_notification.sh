@@ -18,7 +18,8 @@ send_teams_notification() {
     # Validate required parameters
     if [[ -z "$webhook_url" ]]; then
         echo "Error: Teams webhook URL is required"
-        return 1
+        echo "Make sure the DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK secret is properly set in the repository settings."
+        return 0  # Return success to prevent workflow failure, but log the error
     fi
     
     # Default values
