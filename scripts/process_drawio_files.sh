@@ -16,7 +16,12 @@ SPECIFIC_FILE="${SPECIFIC_FILE:-}"
 detect_changed_files() {
   local changed_files=""
   
-  if [[ -n "$SPECIFIC_FILE" ]]; then
+  # Check if CHANGED_FILES environment variable is set (from GitHub Actions)
+  if [[ -n "$CHANGED_FILES" ]]; then
+    echo "Using CHANGED_FILES from environment: $CHANGED_FILES"
+    changed_files="$CHANGED_FILES"
+    return
+  elif [[ -n "$SPECIFIC_FILE" ]]; then
     echo "Processing specific file: $SPECIFIC_FILE"
     changed_files="$SPECIFIC_FILE"
   else
