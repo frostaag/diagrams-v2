@@ -26,7 +26,7 @@ env:
   # SharePoint configuration
   DIAGRAMS_SHAREPOINT_FOLDER: "Diagrams"
   DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME: "Diagrams_Changelog.csv"
-  DIAGRAMS_SHAREPOINT_URL: "https://frostaag.sharepoint.com/sites/Diagrams"
+  DIAGRAMS_SHAREPOINT_URL: "https://frostaag.sharepoint.com/sites/DatasphereFileConnector"
   
   # Teams notification configuration
   DIAGRAMS_TEAMS_NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
@@ -215,17 +215,46 @@ jobs:
       - name: Upload to SharePoint
         continue-on-error: true  # Allow workflow to continue even if SharePoint upload fails
         run: |
+          # Print variables for debugging (safe values only, no secrets)
+          echo "=== SHAREPOINT CONFIGURATION ==="
+          echo "CLIENT_ID: ${SHAREPOINT_CLIENT_ID:0:6}... (truncated)"
+          echo "TENANT_ID: ${SHAREPOINT_TENANT_ID}"
+          echo "SITE_ID: ${SHAREPOINT_SITE_ID}"
+          echo "URL: ${SHAREPOINT_URL}"
+          echo "FOLDER: ${SHAREPOINT_FOLDER}"
+          echo "OUTPUT_FILENAME: ${SHAREPOINT_OUTPUT_FILENAME}"
+          
+          # Debug information for SharePoint connectivity
+          echo "Available SharePoint formats:"
+          echo "1. frostaag.sharepoint.com:/sites/DatasphereFileConnector (site path format)"
+          echo "2. e39939c2-992f-47cc-8b32-20aa466d71f4 (direct site ID format)"
+          echo "==============================="
+          
           echo "Attempting to upload to SharePoint..."
-          if ! bash ./scripts/upload_to_sharepoint.sh; then
-            echo "::warning::SharePoint upload failed. This is likely due to missing or invalid credentials."
-            echo "::warning::Make sure you have set the following secrets and variables:"
-            echo "::warning::  - DIAGRAMS_SHAREPOINT_CLIENT_ID (variable)"
-            echo "::warning::  - DIAGRAMS_SHAREPOINT_CLIENTSECRET (secret)"
-            echo "::warning::  - DIAGRAMS_SHAREPOINT_TENANT_ID (variable)" 
-            echo "::warning::  - DIAGRAMS_SHAREPOINT_SITE_ID (variable)"
-            echo "::warning::  - DIAGRAMS_SHAREPOINT_URL (variable)"
+          
+          # Run with test mode first to debug connection only
+          echo "First checking SharePoint connection without uploading..."
+          
+          if TEST_MODE=true bash ./scripts/upload_to_sharepoint.sh; then
+            echo "SharePoint connection test successful! Now trying actual upload..."
+            
+            # If connection test succeeds, try the actual upload
+            if bash ./scripts/upload_to_sharepoint.sh; then
+              echo "SharePoint upload completed successfully."
+            else
+              echo "::warning::SharePoint upload failed but connection was successful. Check drive/folder permissions."
+            fi
           else
-            echo "SharePoint upload completed successfully."
+            echo "::warning::SharePoint connection test failed. This is likely due to missing or invalid credentials."
+            echo "::warning::Make sure you have set the following secrets and variables:"
+            echo "::warning::  - DIAGRAMS_SHAREPOINT_CLIENT_ID (variable): ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID != '' && 'Set ✓' || 'NOT SET!' }}"
+            echo "::warning::  - DIAGRAMS_SHAREPOINT_CLIENTSECRET (secret): ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENTSECRET != '' && 'Set ✓' || 'NOT SET!' }}"
+            echo "::warning::  - DIAGRAMS_SHAREPOINT_TENANT_ID (variable): ${{ vars.DIAGRAMS_SHAREPOINT_TENANT_ID != '' && 'Set ✓' || 'NOT SET!' }}"
+            echo "::warning::  - DIAGRAMS_SHAREPOINT_SITE_ID (variable): ${{ vars.DIAGRAMS_SHAREPOINT_SITE_ID != '' && 'Set ✓' || 'NOT SET!' }}"
+            echo "::warning::  - DIAGRAMS_SHAREPOINT_URL (variable): ${{ vars.DIAGRAMS_SHAREPOINT_URL != '' && 'Set ✓' || 'NOT SET!' }}"
+            echo "::warning::IMPORTANT: Based on your tests, these formats worked:"
+            echo "::warning::1. Site path: frostaag.sharepoint.com:/sites/DatasphereFileConnector"
+            echo "::warning::2. Direct site ID: e39939c2-992f-47cc-8b32-20aa466d71f4"
           fi
         env:
           SHAREPOINT_CLIENT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID }}
@@ -233,7 +262,7 @@ jobs:
           SHAREPOINT_TENANT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_TENANT_ID }}
           SHAREPOINT_SITE_ID: ${{ vars.DIAGRAMS_SHAREPOINT_SITE_ID }}
           SHAREPOINT_URL: ${{ vars.DIAGRAMS_SHAREPOINT_URL }}
-          SHAREPOINT_FOLDER: "Shared Documents/${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}"
+          SHAREPOINT_FOLDER: ${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}
           SHAREPOINT_OUTPUT_FILENAME: ${{ env.DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME }}
           CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
 
@@ -241,10 +270,21 @@ jobs:
         if: success()
         env:
           TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
+          NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
+          WEBHOOK_CHECK: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK != '' }}
         run: |
           # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
           chmod +x ./scripts/success_notification.sh
+          
+          # Debug webhook URL (masked for security)
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            echo "Teams webhook URL is configured (value masked)"
+            echo "TEAMS_WEBHOOK_URL length: ${#TEAMS_WEBHOOK_URL} characters"
+            echo "First 5 characters (masked): ${TEAMS_WEBHOOK_URL:0:5}****"
+          else
+            echo "Teams webhook URL is not configured"
+          fi
           
           # Check if webhook URL is available
           if [ -n "$TEAMS_WEBHOOK_URL" ]; then
@@ -265,10 +305,18 @@ jobs:
         if: failure()
         env:
           TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
+          NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
         run: |
           # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
           chmod +x ./scripts/failure_notification.sh
+          
+          # Debug webhook URL (masked for security)
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            echo "Teams webhook URL is configured (value masked)"
+          else
+            echo "Teams webhook URL is not configured"
+          fi
           
           # Check if webhook URL is available
           if [ -n "$TEAMS_WEBHOOK_URL" ]; then
