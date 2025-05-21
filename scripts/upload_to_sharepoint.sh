@@ -9,9 +9,23 @@ SHAREPOINT_FOLDER="${SHAREPOINT_FOLDER:-Diagrams}"
 OUTPUT_FILENAME="${SHAREPOINT_OUTPUT_FILENAME:-Diagrams_Changelog.csv}"
 
 # Check if required environment variables are set
-if [[ -z "$SHAREPOINT_CLIENT_ID" ]] || [[ -z "$SHAREPOINT_CLIENT_SECRET" ]] || \
-   [[ -z "$SHAREPOINT_TENANT_ID" ]] || [[ -z "$SHAREPOINT_SITE_ID" ]]; then
-  echo "Error: SharePoint credentials are not set."
+if [[ -z "$SHAREPOINT_CLIENT_ID" ]]; then
+  echo "Error: SHAREPOINT_CLIENT_ID is not set."
+  exit 1
+fi
+
+if [[ -z "$SHAREPOINT_CLIENT_SECRET" ]]; then
+  echo "Error: SHAREPOINT_CLIENT_SECRET is not set."
+  exit 1
+fi
+
+if [[ -z "$SHAREPOINT_TENANT_ID" ]]; then
+  echo "Error: SHAREPOINT_TENANT_ID is not set."
+  exit 1
+fi
+
+if [[ -z "$SHAREPOINT_SITE_ID" ]]; then
+  echo "Error: SHAREPOINT_SITE_ID is not set."
   exit 1
 fi
 

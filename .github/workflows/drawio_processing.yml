@@ -185,11 +185,22 @@ jobs:
           fi
 
       - name: Upload to SharePoint
+        continue-on-error: true  # Allow workflow to continue even if SharePoint upload fails
         run: |
-          bash ./scripts/upload_to_sharepoint.sh
+          echo "Attempting to upload to SharePoint..."
+          if ! bash ./scripts/upload_to_sharepoint.sh; then
+            echo "::warning::SharePoint upload failed. This is likely due to missing or invalid credentials."
+            echo "::warning::Make sure you have set the following secrets and variables:"
+            echo "::warning::  - DIAGRAMS_SHAREPOINT_CLIENT_ID (variable)"
+            echo "::warning::  - DIAGRAMS_SHAREPOINT_CLIENTSECRET (secret)"
+            echo "::warning::  - DIAGRAMS_SHAREPOINT_TENANT_ID (variable)" 
+            echo "::warning::  - DIAGRAMS_SHAREPOINT_SITE_ID (variable)"
+          else
+            echo "SharePoint upload completed successfully."
+          fi
         env:
           SHAREPOINT_CLIENT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID }}
-          SHAREPOINT_CLIENT_SECRET: ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENT_SECRET }}
+          SHAREPOINT_CLIENT_SECRET: ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENTSECRET }}
           SHAREPOINT_TENANT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_TENANT_ID }}
           SHAREPOINT_SITE_ID: ${{ vars.DIAGRAMS_SHAREPOINT_SITE_ID }}
           SHAREPOINT_FOLDER: ${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}
