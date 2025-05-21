@@ -236,18 +236,20 @@ jobs:
 
       - name: Send Teams notification on success
         if: success()
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
         run: |
           # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
           chmod +x ./scripts/success_notification.sh
           
           # Check if webhook URL is available
-          if [ -n "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" ]; then
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
             echo "Sending success notification to Teams..."
             
             # Run the success notification script
             ./scripts/success_notification.sh \
-              "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
+              "$TEAMS_WEBHOOK_URL" \
               "$GITHUB_REPOSITORY" \
               "$GITHUB_SHA" \
               "$GITHUB_WORKFLOW" \
@@ -258,18 +260,20 @@ jobs:
 
       - name: Notify on failure
         if: failure()
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
         run: |
           # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
           chmod +x ./scripts/failure_notification.sh
           
           # Check if webhook URL is available
-          if [ -n "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" ]; then
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
             echo "Sending failure notification to Teams..."
             
             # Run the failure notification script
             ./scripts/failure_notification.sh \
-              "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
+              "$TEAMS_WEBHOOK_URL" \
               "$GITHUB_REPOSITORY" \
               "$GITHUB_SHA" \
               "$GITHUB_WORKFLOW" \

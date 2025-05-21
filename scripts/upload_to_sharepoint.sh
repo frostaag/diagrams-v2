@@ -138,7 +138,7 @@ upload_to_sharepoint() {
     site_formats+=("https://graph.microsoft.com/v1.0/sites/root/sites/${site_guid}")
     site_formats+=("https://graph.microsoft.com/v1.0/sites/frostaag.sharepoint.com:${SHAREPOINT_FOLDER}")
     site_formats+=("https://graph.microsoft.com/v1.0/sites/frostaag.sharepoint.com:/sites/Diagrams")
-  }
+  fi
   
   # Try each format until one works
   local site_url=""
