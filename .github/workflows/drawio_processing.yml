@@ -1,0 +1,133 @@
+name: Draw.io Files Processing
+
+on:
+  push:
+    paths:
+      - 'drawio_files/**/*.drawio'
+  workflow_dispatch:
+    inputs:
+      specific_file:
+        description: 'Specific file to process (leave empty for all files)'
+        required: false
+        default: ''
+
+env:
+  # Draw.io configuration
+  DIAGRAMS_DRAWIO_VERSION: "26.2.2"
+  DIAGRAMS_PNG_SCALE: "2.0"
+  DIAGRAMS_PNG_QUALITY: "100"
+  
+  # File paths
+  DIAGRAMS_CHANGELOG_FILE: "png_files/CHANGELOG.csv"
+  DIAGRAMS_COUNTER_FILE: "drawio_files/.counter"
+  
+  # SharePoint configuration
+  DIAGRAMS_SHAREPOINT_FOLDER: "Diagrams"
+  DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME: "Diagrams_Changelog.csv"
+  
+  # Teams notification configuration
+  DIAGRAMS_TEAMS_NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
+
+jobs:
+  process-drawio-files:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with history
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup DrawIO
+        run: |
+          wget -q https://github.com/jgraph/drawio-desktop/releases/download/v${{ env.DIAGRAMS_DRAWIO_VERSION }}/drawio-x86_64-${{ env.DIAGRAMS_DRAWIO_VERSION }}.deb
+          sudo apt-get install -y ./drawio-x86_64-${{ env.DIAGRAMS_DRAWIO_VERSION }}.deb
+          sudo apt-get install -y xvfb
+
+      - name: Create output directories
+        run: |
+          mkdir -p png_files
+          mkdir -p drawio_files
+          if [ ! -f "${{ env.DIAGRAMS_COUNTER_FILE }}" ]; then
+            echo "001" > "${{ env.DIAGRAMS_COUNTER_FILE }}"
+          fi
+          if [ ! -f "${{ env.DIAGRAMS_CHANGELOG_FILE }}" ]; then
+            echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+          fi
+
+      - name: Process Draw.io files
+        id: process_files
+        run: |
+          bash ./scripts/process_drawio_files.sh
+        env:
+          SPECIFIC_FILE: ${{ github.event.inputs.specific_file }}
+          DIAGRAMS_PNG_SCALE: ${{ env.DIAGRAMS_PNG_SCALE }}
+          DIAGRAMS_PNG_QUALITY: ${{ env.DIAGRAMS_PNG_QUALITY }}
+          DIAGRAMS_COUNTER_FILE: ${{ env.DIAGRAMS_COUNTER_FILE }}
+          DIAGRAMS_CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
+
+      - name: Commit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add png_files/ drawio_files/ ${{ env.DIAGRAMS_CHANGELOG_FILE }} ${{ env.DIAGRAMS_COUNTER_FILE }}
+          git diff --staged --quiet || git commit -m "Update diagram files and changelog [skip ci]"
+          git push
+
+      - name: Upload to SharePoint
+        run: |
+          bash ./scripts/upload_to_sharepoint.sh
+        env:
+          SHAREPOINT_CLIENT_ID: ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENT_ID }}
+          SHAREPOINT_CLIENT_SECRET: ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENT_SECRET }}
+          SHAREPOINT_TENANT_ID: ${{ secrets.DIAGRAMS_SHAREPOINT_TENANT_ID }}
+          SHAREPOINT_SITE_ID: ${{ secrets.DIAGRAMS_SHAREPOINT_SITE_ID }}
+          SHAREPOINT_FOLDER: ${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}
+          SHAREPOINT_OUTPUT_FILENAME: ${{ env.DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME }}
+          CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
+
+      - name: Send Teams notification on success
+        if: success()
+        run: |
+          # Make script executable
+          chmod +x ./scripts/send_teams_notification.sh
+          
+          # Extract the list of processed files
+          PROCESSED_FILES=$(git diff --name-only HEAD~1 HEAD -- 'png_files/*.png' | sed 's|png_files/||g' | sed 's|.png$||g')
+          
+          # Format the message for Teams
+          MESSAGE="Successfully processed the following diagrams:<br>"
+          for file in $PROCESSED_FILES; do
+            MESSAGE+="- $file<br>"
+          done
+          
+          # Send notification
+          ./scripts/send_teams_notification.sh \
+            "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
+            "$DIAGRAMS_TEAMS_NOTIFICATION_TITLE" \
+            "Process completed at $(date '+%Y-%m-%d %H:%M:%S')" \
+            "$MESSAGE" \
+            "0076D7" \
+            "$GITHUB_REPOSITORY" \
+            "$GITHUB_SHA" \
+            "$GITHUB_WORKFLOW" \
+            "$GITHUB_RUN_ID"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          # Make script executable
+          chmod +x ./scripts/send_teams_notification.sh
+          
+          # Send notification
+          ./scripts/send_teams_notification.sh \
+            "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
+            "Draw.io Processing Failed" \
+            "Error occurred at $(date '+%Y-%m-%d %H:%M:%S')" \
+            "The Draw.io processing workflow failed. Please check the logs for details." \
+            "FF0000" \
+            "$GITHUB_REPOSITORY" \
+            "$GITHUB_SHA" \
+            "$GITHUB_WORKFLOW" \
+            "$GITHUB_RUN_ID"
+          
+          echo "::error::The Draw.io processing workflow failed. Check the logs for details."
