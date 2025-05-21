@@ -19,6 +19,7 @@ detect_changed_files() {
   # Check if CHANGED_FILES environment variable is set (from GitHub Actions)
   if [[ -n "$CHANGED_FILES" ]]; then
     echo "Using CHANGED_FILES from environment: $CHANGED_FILES"
+    echo "DEBUG: CHANGED_FILES environment variable is set to: '$CHANGED_FILES'"
     changed_files="$CHANGED_FILES"
     return
   elif [[ -n "$SPECIFIC_FILE" ]]; then
@@ -312,17 +313,41 @@ update_changelog() {
   # Create changelog entry
   local entry="$current_date,$current_time,\"$filename_without_ext\",\"$file\",\"Converted to PNG\",\"$commit_msg\",$version,$commit_hash,\"$author_name\""
   
+  # Make sure changelog file exists
+  if [[ ! -f "$CHANGELOG_FILE" ]]; then
+    echo "Creating new changelog file: $CHANGELOG_FILE"
+    mkdir -p "$(dirname "$CHANGELOG_FILE")"
+    echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
+  fi
+  
   # Add to changelog
   echo "$entry" >> "$CHANGELOG_FILE"
   
   echo "Added entry to changelog for $basename (version $version)"
+  
+  # Touch the changelog file to update its timestamp
+  touch "$CHANGELOG_FILE"
 }
 
 # Main flow
 main() {
   detect_changed_files
   
+  # Debug information
+  echo "DEBUG: About to process files in CHANGED_FILES: '$CHANGED_FILES'"
+  
+  # Check if CHANGED_FILES is empty
+  if [[ -z "$CHANGED_FILES" ]]; then
+    echo "ERROR: No files to process. CHANGED_FILES is empty."
+    exit 0
+  fi
+  
+  # Initialize a counter for processed files
+  local processed_count=0
+  
   for file in $CHANGED_FILES; do
+    echo "Processing file: '$file'"
+    
     if [[ ! -f "$file" ]]; then
       echo "Warning: File $file does not exist, skipping."
       continue
@@ -334,6 +359,7 @@ main() {
     assign_ids "$file"
     if [[ -n "$PROCESSED_FILE" ]]; then
       processed_file="$PROCESSED_FILE"
+      echo "File was renamed to: $processed_file"
     fi
     
     # Convert to PNG
@@ -344,7 +370,19 @@ main() {
     
     # Update changelog
     update_changelog "$processed_file"
+    
+    # Increment counter
+    processed_count=$((processed_count+1))
   done
+  
+  echo "Finished processing $processed_count files."
+  
+  # Force create an empty changelog if none processed
+  if [[ $processed_count -eq 0 && ! -f "$CHANGELOG_FILE" ]]; then
+    echo "Creating empty changelog as no files were processed."
+    mkdir -p "$(dirname "$CHANGELOG_FILE")"
+    echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
+  fi
 }
 
 # Run main function

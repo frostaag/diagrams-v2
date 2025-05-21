@@ -127,6 +127,8 @@ upload_to_sharepoint() {
     "https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}"
     "https://graph.microsoft.com/v1.0/sites/${sharepoint_domain}:/sites/${SHAREPOINT_SITE_ID#*/sites/}"
     "https://graph.microsoft.com/v1.0/sites/${sharepoint_domain}"
+    "https://graph.microsoft.com/v1.0/sites/frostaag.sharepoint.com:/sites/Diagrams"
+    "https://graph.microsoft.com/v1.0/sites/${sharepoint_domain}:/sites/Diagrams"
   )
   
   # If we have a GUID, add more formats
@@ -134,7 +136,9 @@ upload_to_sharepoint() {
   if [ -n "$site_guid" ]; then
     site_formats+=("https://graph.microsoft.com/v1.0/sites/${sharepoint_domain},${site_guid},${site_guid}")
     site_formats+=("https://graph.microsoft.com/v1.0/sites/root/sites/${site_guid}")
-  fi
+    site_formats+=("https://graph.microsoft.com/v1.0/sites/frostaag.sharepoint.com:${SHAREPOINT_FOLDER}")
+    site_formats+=("https://graph.microsoft.com/v1.0/sites/frostaag.sharepoint.com:/sites/Diagrams")
+  }
   
   # Try each format until one works
   local site_url=""
