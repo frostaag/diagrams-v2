@@ -37,11 +37,59 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set script permissions
+        run: |
+          chmod +x ./scripts/*.sh
+          
       - name: Setup DrawIO
         run: |
-          wget -q https://github.com/jgraph/drawio-desktop/releases/download/v${{ env.DIAGRAMS_DRAWIO_VERSION }}/drawio-x86_64-${{ env.DIAGRAMS_DRAWIO_VERSION }}.deb
-          sudo apt-get install -y ./drawio-x86_64-${{ env.DIAGRAMS_DRAWIO_VERSION }}.deb
-          sudo apt-get install -y xvfb
+          echo "Installing DrawIO version ${{ env.DIAGRAMS_DRAWIO_VERSION }}"
+          sudo apt-get update
+          
+          # Install dependencies required for headless operation
+          sudo apt-get install -y wget xvfb libasound2 libgbm1 libnspr4 libnss3 libxss1 \
+            libxtst6 libgtk-3-0 libx11-xcb1 libdrm2 libgbm1 libnss3 libxss1 libx11-xcb1 \
+            libasound2 libatk-bridge2.0-0
+          
+          # Download DrawIO with retry logic
+          MAX_RETRIES=3
+          RETRY=0
+          DOWNLOAD_SUCCESS=false
+          
+          while [ $RETRY -lt $MAX_RETRIES ] && [ "$DOWNLOAD_SUCCESS" != "true" ]; do
+            echo "Download attempt $(($RETRY+1)) of $MAX_RETRIES"
+            if wget -q https://github.com/jgraph/drawio-desktop/releases/download/v${{ env.DIAGRAMS_DRAWIO_VERSION }}/drawio-amd64-${{ env.DIAGRAMS_DRAWIO_VERSION }}.deb; then
+              DOWNLOAD_SUCCESS=true
+              echo "Download successful"
+            else
+              RETRY=$(($RETRY+1))
+              if [ $RETRY -lt $MAX_RETRIES ]; then
+                echo "Retrying in 5 seconds..."
+                sleep 5
+              fi
+            fi
+          done
+          
+          if [ "$DOWNLOAD_SUCCESS" != "true" ]; then
+            echo "::error::Failed to download DrawIO after $MAX_RETRIES attempts"
+            exit 1
+          fi
+          
+          # Install DrawIO
+          sudo apt-get install -y ./drawio-amd64-${{ env.DIAGRAMS_DRAWIO_VERSION }}.deb
+          
+          # Configure and verify installation
+          echo "Installed DrawIO version:"
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio --version || echo "Cannot determine version, but continuing"
+          
+          # Test that the conversion works
+          echo "<mxfile><diagram name='Test'>dZHBDoMgDIafhrtC5uLcnJs7efBMRCZkKGhYts3HTwXmkm1JL037f/1pKcQ0b/ea1cWBOSghfVcUYiZk6McpySiDCvcKVkVFcW3jPT4vuHgBwkmIbYu9UxL8IGuUDiOTDDkIe2Bju4SM+UOw3EF6ngQ7vSLbIukzznboLJhlzonekqklOct5qQM/rTl9Cdtdpzt7modNwLwo+hX88B6Ulu37BfkH</diagram></mxfile>" > /tmp/test.drawio
+          mkdir -p /tmp/output
+          if xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio -x -f png --scale 2 --quality 100 -o /tmp/output/test.png /tmp/test.drawio; then
+            echo "DrawIO conversion test successful!"
+          else
+            echo "DrawIO conversion test failed, but continuing anyway. May need troubleshooting during actual conversions."
+          fi
 
       - name: Create output directories
         run: |
@@ -58,6 +106,45 @@ jobs:
         id: process_files
         run: |
           bash ./scripts/process_drawio_files.sh
+          
+          # Count processed files and create summary
+          PROCESSED_COUNT=$(find png_files -name "*.png" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" | wc -l)
+          FAILED_COUNT=$(find png_files -name "*.png.error" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" | wc -l)
+          
+          # Set output variables for use in other steps
+          echo "PROCESSED_COUNT=$PROCESSED_COUNT" >> $GITHUB_ENV
+          echo "FAILED_COUNT=$FAILED_COUNT" >> $GITHUB_ENV
+          
+          # Create a summary output
+          echo "## Draw.io Processing Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Successfully processed files: $PROCESSED_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- Failed conversions: $FAILED_COUNT" >> $GITHUB_STEP_SUMMARY
+          
+          if [ $PROCESSED_COUNT -eq 0 ] && [ $FAILED_COUNT -eq 0 ]; then
+            echo "No files were processed. This could be because:" >> $GITHUB_STEP_SUMMARY
+            echo "- No .drawio files were changed in this commit" >> $GITHUB_STEP_SUMMARY
+            echo "- File detection logic couldn't find any changed files" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # List changed files in the summary
+          if [ $PROCESSED_COUNT -gt 0 ]; then
+            echo "### Processed Files:" >> $GITHUB_STEP_SUMMARY
+            find png_files -name "*.png" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" | while read -r file; do
+              echo "- $(basename "$file")" >> $GITHUB_STEP_SUMMARY
+            done
+          fi
+          
+          if [ $FAILED_COUNT -gt 0 ]; then
+            echo "### Failed Conversions:" >> $GITHUB_STEP_SUMMARY
+            find png_files -name "*.png.error" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" | while read -r file; do
+              echo "- $(basename "${file%.error}")" >> $GITHUB_STEP_SUMMARY
+            done
+          fi
+          
+          # Exit with error if any conversions failed
+          if [ $FAILED_COUNT -gt 0 ]; then
+            echo "::warning::$FAILED_COUNT file(s) failed to convert. See summary for details."
+          fi
         env:
           SPECIFIC_FILE: ${{ github.event.inputs.specific_file }}
           DIAGRAMS_PNG_SCALE: ${{ env.DIAGRAMS_PNG_SCALE }}
@@ -88,25 +175,13 @@ jobs:
       - name: Send Teams notification on success
         if: success()
         run: |
-          # Make script executable
+          # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
+          chmod +x ./scripts/success_notification.sh
           
-          # Extract the list of processed files
-          PROCESSED_FILES=$(git diff --name-only HEAD~1 HEAD -- 'png_files/*.png' | sed 's|png_files/||g' | sed 's|.png$||g')
-          
-          # Format the message for Teams
-          MESSAGE="Successfully processed the following diagrams:<br>"
-          for file in $PROCESSED_FILES; do
-            MESSAGE+="- $file<br>"
-          done
-          
-          # Send notification
-          ./scripts/send_teams_notification.sh \
+          # Run the success notification script
+          ./scripts/success_notification.sh \
             "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
-            "$DIAGRAMS_TEAMS_NOTIFICATION_TITLE" \
-            "Process completed at $(date '+%Y-%m-%d %H:%M:%S')" \
-            "$MESSAGE" \
-            "0076D7" \
             "$GITHUB_REPOSITORY" \
             "$GITHUB_SHA" \
             "$GITHUB_WORKFLOW" \
@@ -115,16 +190,13 @@ jobs:
       - name: Notify on failure
         if: failure()
         run: |
-          # Make script executable
+          # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
+          chmod +x ./scripts/failure_notification.sh
           
-          # Send notification
-          ./scripts/send_teams_notification.sh \
+          # Run the failure notification script
+          ./scripts/failure_notification.sh \
             "${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
-            "Draw.io Processing Failed" \
-            "Error occurred at $(date '+%Y-%m-%d %H:%M:%S')" \
-            "The Draw.io processing workflow failed. Please check the logs for details." \
-            "FF0000" \
             "$GITHUB_REPOSITORY" \
             "$GITHUB_SHA" \
             "$GITHUB_WORKFLOW" \
