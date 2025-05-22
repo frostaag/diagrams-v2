@@ -19,7 +19,6 @@ detect_changed_files() {
   # Check if CHANGED_FILES environment variable is set (from GitHub Actions)
   if [[ -n "$CHANGED_FILES" ]]; then
     echo "Using CHANGED_FILES from environment: $CHANGED_FILES"
-    echo "DEBUG: CHANGED_FILES environment variable is set to: '$CHANGED_FILES'"
     changed_files="$CHANGED_FILES"
     return
   elif [[ -n "$SPECIFIC_FILE" ]]; then
@@ -336,12 +335,65 @@ update_changelog() {
   touch "$CHANGELOG_FILE"
 }
 
+# Function to generate GitHub step summary
+generate_github_step_summary() {
+  local processed_count="$1"
+  
+  # If GITHUB_STEP_SUMMARY isn't available, we're not running in GitHub Actions
+  if [[ -z "$GITHUB_STEP_SUMMARY" ]]; then
+    echo "Not running in GitHub Actions, skipping summary generation"
+    return
+  fi
+  
+  echo "Generating GitHub step summary..."
+  
+  # Header
+  echo "## 📊 Draw.io Processing Summary" >> $GITHUB_STEP_SUMMARY
+  echo "" >> $GITHUB_STEP_SUMMARY
+  
+  if [[ $processed_count -eq 0 ]]; then
+    echo "📝 **No diagrams processed in this run**" >> $GITHUB_STEP_SUMMARY
+    return
+  fi
+  
+  # Get list of processed files from the latest changes
+  local processed_files=$(git diff --name-only HEAD~1 HEAD -- 'png_files/*.png' | sed 's|png_files/||g' | sed 's|.png$||g')
+  
+  echo "### 🔄 Processed Files (${processed_count})" >> $GITHUB_STEP_SUMMARY
+  echo "" >> $GITHUB_STEP_SUMMARY
+  
+  echo "| File | Version | Action |" >> $GITHUB_STEP_SUMMARY
+  echo "|------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+  
+  # Extract information from changelog
+  if [[ -f "$CHANGELOG_FILE" ]]; then
+    # Skip the header line and get the last $processed_count lines
+    tail -n "$processed_count" "$CHANGELOG_FILE" | while IFS=, read -r date time diagram file action message version hash author; do
+      # Clean up the values (remove quotes)
+      diagram=$(echo "$diagram" | tr -d '"')
+      version=$(echo "$version" | tr -d '"')
+      action=$(echo "$action" | tr -d '"')
+      
+      echo "| ${diagram} | ${version} | ${action} |" >> $GITHUB_STEP_SUMMARY
+    done
+  fi
+  
+  echo "" >> $GITHUB_STEP_SUMMARY
+  echo "### ⚙️ Configuration" >> $GITHUB_STEP_SUMMARY
+  echo "" >> $GITHUB_STEP_SUMMARY
+  echo "- **PNG Scale**: ${PNG_SCALE}" >> $GITHUB_STEP_SUMMARY
+  echo "- **PNG Quality**: ${PNG_QUALITY}" >> $GITHUB_STEP_SUMMARY
+  echo "- **Changelog**: \`${CHANGELOG_FILE}\`" >> $GITHUB_STEP_SUMMARY
+  
+  echo "" >> $GITHUB_STEP_SUMMARY
+  echo "✅ **All diagrams processed successfully**" >> $GITHUB_STEP_SUMMARY
+}
+
 # Main flow
 main() {
   detect_changed_files
   
-  # Debug information
-  echo "DEBUG: About to process files in CHANGED_FILES: '$CHANGED_FILES'"
+  # Prepare to process files
   
   # Check if CHANGED_FILES is empty
   if [[ -z "$CHANGED_FILES" ]]; then
@@ -390,6 +442,9 @@ main() {
     mkdir -p "$(dirname "$CHANGELOG_FILE")"
     echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
   fi
+  
+  # Generate GitHub step summary
+  generate_github_step_summary "$processed_count"
 }
 
 # Run main function
