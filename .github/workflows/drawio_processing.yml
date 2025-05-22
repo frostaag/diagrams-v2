@@ -48,6 +48,13 @@ permissions:
 jobs:
   process-drawio-files:
     runs-on: ubuntu-latest
+    outputs:
+      PROCESSED_COUNT: ${{ steps.process_files.outputs.PROCESSED_COUNT }}
+      FAILED_COUNT: ${{ steps.process_files.outputs.FAILED_COUNT }}
+      CHANGELOG_FILE_PATH: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
+      SHAREPOINT_CONNECTIVITY_OK: ${{ steps.sharepoint_test.outputs.sharepoint_connectivity_ok }}
+      SHAREPOINT_UPLOAD_SUCCESS: ${{ steps.set_sharepoint_upload_status.outputs.final_upload_status }}
+      WORKFLOW_RESULT: ${{ job.status }}
     steps:
       - name: Checkout repository with history
         uses: actions/checkout@v3
@@ -128,12 +135,12 @@ jobs:
             CHANGED_FILES="${{ github.event.inputs.specific_file }}"
           else
             # Detect changed files in the commit
-            CHANGED_FILES=$(git diff --name-only --diff-filter=AM ${{ github.event.before || 'HEAD^' }} ${{ github.sha }} -- "drawio_files/*.drawio" | tr '\n' ' ')
+            CHANGED_FILES=$(git diff --name-only --diff-filter=AM ${{ github.event.before || 'HEAD^' }} ${{ github.sha }} -- "drawio_files/*.drawio" | tr '\\n' ' ')
             
             # If no files found and this is a manual trigger, check all files
             if [ -z "$CHANGED_FILES" ] && [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
               echo "Manual trigger detected. Finding all .drawio files..."
-              CHANGED_FILES=$(find drawio_files -name "*.drawio" -type f | tr '\n' ' ')
+              CHANGED_FILES=$(find drawio_files -name "*.drawio" -type f | tr '\\n' ' ')
             fi
             
             # Output the files we're going to process
@@ -151,8 +158,8 @@ jobs:
           FAILED_COUNT=$(find png_files -name "*.png.error" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" | wc -l)
           
           # Set output variables for use in other steps
-          echo "PROCESSED_COUNT=$PROCESSED_COUNT" >> $GITHUB_ENV
-          echo "FAILED_COUNT=$FAILED_COUNT" >> $GITHUB_ENV
+          echo "PROCESSED_COUNT=$PROCESSED_COUNT" >> $GITHUB_OUTPUT
+          echo "FAILED_COUNT=$FAILED_COUNT" >> $GITHUB_OUTPUT
           
           # Create a summary output
           echo "## Draw.io Processing Summary" >> $GITHUB_STEP_SUMMARY
@@ -195,6 +202,15 @@ jobs:
           DIAGRAMS_PNG_QUALITY: ${{ env.DIAGRAMS_PNG_QUALITY }}
           DIAGRAMS_COUNTER_FILE: ${{ env.DIAGRAMS_COUNTER_FILE }}
           DIAGRAMS_CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
+        outputs:
+          PROCESSED_COUNT: ${{ steps.process_files.outputs.PROCESSED_COUNT }}
+          FAILED_COUNT: ${{ steps.process_files.outputs.FAILED_COUNT }}
+          CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
+          SHAREPOINT_CONNECTIVITY_OK: ${{ steps.sharepoint_test.outputs.sharepoint_connectivity_ok }}
+          SHAREPOINT_UPLOAD_SUCCESS: ${{ env.UPLOAD_SUCCESS }}
+          SHAREPOINT_URL: ${{ env.DIAGRAMS_SHAREPOINT_URL }}
+          SHAREPOINT_FOLDER: ${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}
+          SHAREPOINT_OUTPUT_FILENAME: ${{ env.DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME }}
 
       - name: Commit changes
         run: |
@@ -377,7 +393,7 @@ jobs:
               
               if (result.includes("File uploaded successfully") || result.includes("✅")) {
                 console.log("✅ SharePoint upload via Node.js completed successfully.");
-                core.exportVariable('UPLOAD_SUCCESS', 'true');
+                core.setOutput('status', 'true');
                 
                 // Add to summary
                 await core.summary
@@ -389,12 +405,12 @@ jobs:
                 return true;
               } else {
                 console.log("⚠️ SharePoint upload via Node.js may have issues, check logs.");
-                core.exportVariable('UPLOAD_SUCCESS', 'false');
+                core.setOutput('status', 'false');
                 return false;
               }
             } catch (error) {
               console.error(`Error in Node.js upload: ${error.message}`);
-              core.exportVariable('UPLOAD_SUCCESS', 'false');
+              core.setOutput('status', 'false');
               return false;
             }
         env:
@@ -409,7 +425,8 @@ jobs:
 
       # Fall back to shell script approach if Node.js fails
       - name: Upload changelog to SharePoint (Shell script fallback)
-        if: ${{ steps.nodejs_upload.outcome == 'failure' || env.UPLOAD_SUCCESS != 'true' }}
+        id: shell_upload_fallback
+        if: steps.nodejs_upload.outputs.status != 'true'
         continue-on-error: true
         run: |
           echo "📤 Attempting SharePoint upload using shell scripts (fallback method)..."
@@ -437,6 +454,7 @@ jobs:
             echo "## SharePoint Upload Status" >> $GITHUB_STEP_SUMMARY
             echo "✅ Successfully uploaded changelog to SharePoint" >> $GITHUB_STEP_SUMMARY
             echo "File URL: ${SHAREPOINT_URL}/Shared Documents/${SHAREPOINT_FOLDER}/${SHAREPOINT_OUTPUT_FILENAME}" >> $GITHUB_STEP_SUMMARY
+            echo "status=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           
@@ -447,6 +465,7 @@ jobs:
             echo "## SharePoint Upload Status" >> $GITHUB_STEP_SUMMARY
             echo "✅ Successfully uploaded changelog to SharePoint" >> $GITHUB_STEP_SUMMARY
             echo "File URL: ${SHAREPOINT_URL}/Shared Documents/${SHAREPOINT_FOLDER}/${SHAREPOINT_OUTPUT_FILENAME}" >> $GITHUB_STEP_SUMMARY
+            echo "status=true" >> $GITHUB_OUTPUT
           else
             echo "::warning::Fixed SharePoint upload script failed. Trying original script..."
             echo "## SharePoint Upload Status" >> $GITHUB_STEP_SUMMARY
@@ -457,12 +476,14 @@ jobs:
             if bash ./scripts/upload_to_sharepoint.sh; then
               echo "✅ Fallback SharePoint upload succeeded."
               echo "✅ Successfully uploaded using fallback method" >> $GITHUB_STEP_SUMMARY
+              echo "status=true" >> $GITHUB_OUTPUT
             else
               echo "❌ All SharePoint upload methods failed."
               echo "Please review the following:" >> $GITHUB_STEP_SUMMARY
               echo "1. Verify your Azure App registration has the necessary permissions" >> $GITHUB_STEP_SUMMARY
               echo "2. Ensure the credentials are correctly configured" >> $GITHUB_STEP_SUMMARY
               echo "3. Check network connectivity from GitHub Actions to Microsoft Graph API" >> $GITHUB_STEP_SUMMARY
+              echo "status=false" >> $GITHUB_OUTPUT
             fi
           fi
         env:
@@ -479,89 +500,68 @@ jobs:
           USE_DIRECT_CONNECTION: "true"
           FORCE_TLS: "true"
 
+      - name: Set SharePoint Upload Status Output
+        id: set_sharepoint_upload_status
+        if: always()
+        run: |
+          final_status="false"
+          if [[ "${{ steps.nodejs_upload.outputs.status }}" == "true" ]]; then
+            final_status="true"
+          elif [[ "${{ steps.shell_upload_fallback.outputs.status }}" == "true" ]]; then
+            final_status="true"
+          fi
+          echo "final_upload_status=${final_status}" >> $GITHUB_OUTPUT
+
+  send_notification:
+    runs-on: ubuntu-latest
+    needs: process-drawio-files
+    if: always()
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # For git log in notification scripts
+
+      - name: Set script permissions
+        run: chmod +x ./scripts/*.sh
+
       - name: Send Teams notification on success
-        if: success()
+        if: needs.process-drawio-files.result == 'success'
         env:
           TEAMS_WEBHOOK_URL: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
           NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
           GITHUB_ACTOR: ${{ github.actor }}
+          PROCESSED_COUNT: ${{ needs.process-drawio-files.outputs.PROCESSED_COUNT }}
+          FAILED_COUNT: ${{ needs.process-drawio-files.outputs.FAILED_COUNT }}
+          CHANGELOG_FILE: ${{ needs.process-drawio-files.outputs.CHANGELOG_FILE_PATH }}
+          SHAREPOINT_CONNECTIVITY_OK: ${{ needs.process-drawio-files.outputs.SHAREPOINT_CONNECTIVITY_OK }}
+          SHAREPOINT_UPLOAD_SUCCESS: ${{ needs.process-drawio-files.outputs.SHAREPOINT_UPLOAD_SUCCESS }}
+          SHAREPOINT_URL: ${{ env.DIAGRAMS_SHAREPOINT_URL }}
+          SHAREPOINT_FOLDER: ${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}
+          SHAREPOINT_OUTPUT_FILENAME: ${{ env.DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME }}
+          # Environment variables used by success_notification.sh
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REF: ${{ github.ref }}
         run: |
-          # Make scripts executable
-          chmod +x ./scripts/send_teams_notification.sh
-          chmod +x ./scripts/success_notification.sh
-          
-          # Get author name from Git
           AUTHOR_NAME=$(git log -1 --format="%an" HEAD)
           export AUTHOR_NAME
-          
-          # Debug webhook URL
-          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
-            echo "Teams webhook URL is configured and ready for notifications"
-            echo "TEAMS_WEBHOOK_URL length: ${#TEAMS_WEBHOOK_URL} characters"
-          else
-            echo "Teams webhook URL is not configured"
-          fi
-          
-          # Print information used for notification
-          echo "Workflow info:"
-          echo "- Repository: $GITHUB_REPOSITORY"
-          echo "- Actor: $GITHUB_ACTOR"
-          echo "- Workflow: $GITHUB_WORKFLOW"
-          echo "- Run ID: $GITHUB_RUN_ID"
-          
-          # Check if webhook URL is available
-          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
-            echo "Sending success notification to Teams..."
-            
-            # Run the success notification script
-            ./scripts/success_notification.sh \
-              "$TEAMS_WEBHOOK_URL" \
-              "$GITHUB_REPOSITORY" \
-              "$GITHUB_SHA" \
-              "$GITHUB_WORKFLOW" \
-              "$GITHUB_RUN_ID"
-          else
-            echo "::warning::Teams webhook URL not configured. Skipping notification."
-          fi
+          bash ./scripts/success_notification.sh
 
-      - name: Notify on failure
-        if: failure()
+      - name: Send Teams notification on failure
+        if: needs.process-drawio-files.result == 'failure'
         env:
           TEAMS_WEBHOOK_URL: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
-          NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
+          NOTIFICATION_TITLE: "[FAILURE] ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}"
           GITHUB_ACTOR: ${{ github.actor }}
+          # Environment variables used by failure_notification.sh
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REF: ${{ github.ref }}
         run: |
-          # Make scripts executable
-          chmod +x ./scripts/send_teams_notification.sh
-          chmod +x ./scripts/failure_notification.sh
-          
-          # Debug webhook URL (masked for security)
-          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
-            echo "Teams webhook URL is configured (value masked)"
-          else
-            echo "Teams webhook URL is not configured"
-          fi
-          
-          # Print information used for notification
-          echo "Workflow info:"
-          echo "- Repository: $GITHUB_REPOSITORY"
-          echo "- Actor: $GITHUB_ACTOR"
-          echo "- Workflow: $GITHUB_WORKFLOW"
-          echo "- Run ID: $GITHUB_RUN_ID"
-          
-          # Check if webhook URL is available
-          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
-            echo "Sending failure notification to Teams..."
-            
-            # Run the failure notification script
-            ./scripts/failure_notification.sh \
-              "$TEAMS_WEBHOOK_URL" \
-              "$GITHUB_REPOSITORY" \
-              "$GITHUB_SHA" \
-              "$GITHUB_WORKFLOW" \
-              "$GITHUB_RUN_ID"
-          else
-            echo "::warning::Teams webhook URL not configured. Skipping notification."
-          fi
-          
-          echo "::error::The Draw.io processing workflow failed. Check the logs for details."
+          AUTHOR_NAME=$(git log -1 --format="%an" HEAD)
+          export AUTHOR_NAME
+          bash ./scripts/failure_notification.sh
