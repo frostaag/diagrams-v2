@@ -19,9 +19,8 @@ fi
 PROCESSED_FILES=$(git diff --name-only HEAD~1 HEAD -- 'png_files/*.png' | sed 's|png_files/||g' | sed 's|.png$||g')
 
 # Create success message in the requested format
-MESSAGE="✅ Draw.io Conversion Workflow Succeeded<br>"
-MESSAGE+="GitHub Actions workflow run completed successfully<br><br>"
-MESSAGE+="**Repository**<br>"
+# The main title is now handled by the send_teams_notification.sh script's title parameter
+MESSAGE="**Repository**<br>"
 MESSAGE+="${GITHUB_REPOSITORY}<br><br>"
 MESSAGE+="**Workflow**<br>"
 MESSAGE+="${GITHUB_WORKFLOW}<br><br>"

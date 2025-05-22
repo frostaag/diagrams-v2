@@ -255,17 +255,31 @@ determine_version() {
   
   if [[ -f "$version_file" ]]; then
     echo "Version file exists at $version_file" >&2
-    local current_version=$(grep "^$id:" "$version_file" | cut -d: -f2)
-    if [[ -n "$current_version" ]]; then
-      major=$(echo "$current_version" | cut -d. -f1)
-      minor=$(echo "$current_version" | cut -d. -f2)
-      echo "Found existing version for ID $id: $current_version" >&2
+    local current_version_line=$(grep "^$id:" "$version_file")
+    if [[ -n "$current_version_line" ]]; then
+      local current_version=$(echo "$current_version_line" | cut -d: -f2)
+      # Ensure current_version is in major.minor format, default to 0 if not
+      if [[ "$current_version" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+        major=${BASH_REMATCH[1]}
+        minor=${BASH_REMATCH[2]}
+      elif [[ "$current_version" =~ ^([0-9]+)$ ]]; then # Handle case where version might be just '1'
+        major=${BASH_REMATCH[1]}
+        minor=0
+      else # Default if format is unexpected
+        major=1
+        minor=0
+      fi
+      echo "Found existing version for ID $id: $major.$minor" >&2
     else
       echo "No existing version for ID $id, will start with 1.0" >&2
+      major=1
+      minor=0
     fi
   else
     echo "Version file doesn't exist, creating new one at $version_file" >&2
     touch "$version_file"
+    major=1
+    minor=0
   fi
   
   # Determine version based on commit message
@@ -276,7 +290,7 @@ determine_version() {
     echo "This is a new file, setting initial version to 1.0" >&2
   else
     # For updates, increment minor version
-    minor=$((minor+1))
+    minor=$((10#$minor+1)) # Ensure base-10 arithmetic for minor
     echo "This is an update, incrementing minor version to $major.$minor" >&2
   fi
   
@@ -285,8 +299,6 @@ determine_version() {
   # Update the version file
   if grep -q "^$id:" "$version_file"; then
     echo "Updating existing entry for ID $id to version $new_version" >&2
-    # Use platform-independent way to update the version file
-    # Create a temporary file for sed output
     local temp_version_file=$(mktemp)
     sed "s/^$id:.*/$id:$new_version/" "$version_file" > "$temp_version_file"
     mv "$temp_version_file" "$version_file"

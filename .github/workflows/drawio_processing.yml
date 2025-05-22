@@ -13,8 +13,8 @@ on:
 
 # Ensure only one workflow at a time can run to prevent conflicts
 concurrency:
-  group: drawio-processing
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # Draw.io configuration
