@@ -319,8 +319,8 @@ jobs:
             echo "Drive ID was set to 'auto'; using base drive ID for this step: ${DRIVE_ID_TO_USE}"
           fi
           
-          # Check if Diagrams folder exists in Shared Documents (correct path)
-          FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Shared Documents/Diagrams"
+          # Check if Diagrams folder exists in Shared Documents (correct path) with URL encoding for spaces
+          FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Shared%20Documents/Diagrams"
           FOLDER_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X GET "$FOLDER_CHECK_URL" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Accept: application/json")
@@ -328,8 +328,8 @@ jobs:
           if [[ "$FOLDER_RESPONSE" == *"error"* && "$FOLDER_RESPONSE" == *"itemNotFound"* ]]; then
             echo "📁 Diagrams folder does not exist. Creating it..."
             
-            # Create Diagrams folder in Shared Documents (correct path)
-            CREATE_FOLDER_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Shared Documents:/children"
+            # Create Diagrams folder in Shared Documents (correct path) with URL encoding for spaces
+            CREATE_FOLDER_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Shared%20Documents:/children"
             CREATE_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X POST "$CREATE_FOLDER_URL" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
@@ -418,6 +418,7 @@ jobs:
           echo "📤 Attempting SharePoint upload using shell scripts (fallback method)..."
           
           # Make scripts executable again to be safe
+          chmod +x ./scripts/direct_sharepoint_upload.sh
           chmod +x ./scripts/fixed_sharepoint_upload.sh
           chmod +x ./scripts/upload_to_sharepoint.sh
           
@@ -430,14 +431,25 @@ jobs:
           echo "- Site ID: ${SHAREPOINT_SITE_ID}"
           echo "- Drive ID: ${SHAREPOINT_DRIVE_ID}"
           echo "- Folder: ${SHAREPOINT_FOLDER}"
-          echo "- Target path: Documents/${SHAREPOINT_FOLDER}/${SHAREPOINT_OUTPUT_FILENAME}"
+          echo "- Target path: Shared Documents/${SHAREPOINT_FOLDER}/${SHAREPOINT_OUTPUT_FILENAME}"
           
-          # Use the enhanced fixed script with direct drive ID
-          if bash ./scripts/fixed_sharepoint_upload.sh; then
+          # Try the new direct upload script first with proper URL encoding
+          echo "💾 Using direct upload script with URL encoding for spaces..."
+          if bash ./scripts/direct_sharepoint_upload.sh; then
             echo "✅ SharePoint upload completed successfully."
             echo "## SharePoint Upload Status" >> $GITHUB_STEP_SUMMARY
             echo "✅ Successfully uploaded changelog to SharePoint" >> $GITHUB_STEP_SUMMARY
-            echo "File URL: ${SHAREPOINT_URL}/Documents/${SHAREPOINT_FOLDER}/${SHAREPOINT_OUTPUT_FILENAME}" >> $GITHUB_STEP_SUMMARY
+            echo "File URL: ${SHAREPOINT_URL}/Shared Documents/${SHAREPOINT_FOLDER}/${SHAREPOINT_OUTPUT_FILENAME}" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          # If the direct method fails, try the fixed script
+          echo "🔄 Direct upload failed, trying fixed upload script..."
+          if bash ./scripts/fixed_sharepoint_upload.sh; then
+            echo "✅ SharePoint upload completed successfully with fixed script."
+            echo "## SharePoint Upload Status" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Successfully uploaded changelog to SharePoint" >> $GITHUB_STEP_SUMMARY
+            echo "File URL: ${SHAREPOINT_URL}/Shared Documents/${SHAREPOINT_FOLDER}/${SHAREPOINT_OUTPUT_FILENAME}" >> $GITHUB_STEP_SUMMARY
           else
             echo "::warning::Fixed SharePoint upload script failed. Trying original script..."
             echo "## SharePoint Upload Status" >> $GITHUB_STEP_SUMMARY

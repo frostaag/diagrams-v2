@@ -1,6 +1,6 @@
 #!/bin/bash
 # Direct SharePoint upload script - simplified for reliability
-# This script uploads directly to the Documents/Diagrams folder using a fixed drive ID
+# This script uploads directly to the Shared Documents/Diagrams folder using a fixed drive ID
 
 set -e
 
@@ -42,30 +42,37 @@ fi
 
 echo "===== DIRECT SHAREPOINT UPLOAD ====="
 echo "Using fixed path and known drive ID"
-echo "Site ID: $SHAREPOINT_SITE_ID"
+echo "Site ID: $SHAREPOINT_SITE_ID" 
 echo "Drive ID: $DRIVE_ID"
-echo "Target: Documents/$SHAREPOINT_FOLDER/$OUTPUT_FILENAME"
-echo "====================================="
+echo "Target: Shared Documents/$SHAREPOINT_FOLDER/$OUTPUT_FILENAME"
+echo "======================================"
 
 # Get token
 echo "🔑 Getting access token..."
-AUTH_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X POST \
+
+# Test URL encoding for spaces
+echo "DEBUG: Testing URL encoding for spaces..."
+echo "Raw path: Shared Documents/Diagrams"  
+echo "URL encoded path: Shared%20Documents/Diagrams"
+
+# Get access token
+TOKEN_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X POST \
   "https://login.microsoftonline.com/${SHAREPOINT_TENANT_ID}/oauth2/v2.0/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=${SHAREPOINT_CLIENT_ID}&scope=https://graph.microsoft.com/.default&client_secret=${SHAREPOINT_CLIENT_SECRET}&grant_type=client_credentials")
 
-ACCESS_TOKEN=$(echo "$AUTH_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
 if [[ -z "$ACCESS_TOKEN" ]]; then
   echo "❌ Failed to get access token"
-  echo "Response: $AUTH_RESPONSE"
+  echo "Response: $TOKEN_RESPONSE"
   exit 1
 else
   echo "✅ Got access token (${#ACCESS_TOKEN} characters)"
 fi
 
 # Ensure Diagrams folder exists
-echo "📁 Ensuring Documents/Diagrams folder exists..."
-FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Documents/Diagrams"
+echo "📁 Ensuring Shared Documents/Diagrams folder exists..."
+FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Shared Documents/Diagrams"
 FOLDER_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X GET "$FOLDER_CHECK_URL" \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Accept: application/json")
@@ -74,7 +81,7 @@ if [[ "$FOLDER_RESPONSE" == *"error"* && "$FOLDER_RESPONSE" == *"itemNotFound"* 
   echo "📁 Diagrams folder does not exist. Creating it..."
   
   # Create Diagrams folder
-  CREATE_FOLDER_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Documents:/children"
+  CREATE_FOLDER_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Shared Documents:/children"
   CREATE_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X POST "$CREATE_FOLDER_URL" \
     -H "Authorization: Bearer $ACCESS_TOKEN" \
     -H "Content-Type: application/json" \
@@ -98,9 +105,10 @@ FILE_SIZE=$(wc -c < "$CHANGELOG_FILE")
 # Try multiple path formats for maximum compatibility
 echo "Trying multiple path formats to ensure compatibility..."
 
-# Option 1: Using the b! format with /root:/Documents/path (standard path)
-UPLOAD_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
-echo "🔄 Trying upload with URL (format 1 - Documents): $UPLOAD_URL"
+# Option 1: Using the b! format with /root:/Shared Documents/path (standard path)
+# Use URL encoding for spaces in "Shared Documents"
+UPLOAD_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Shared%20Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+echo "🔄 Trying upload with URL (format 1 - Shared Documents with URL encoding): $UPLOAD_URL"
 
 # Upload with curl
 UPLOAD_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$UPLOAD_URL" \
@@ -111,7 +119,7 @@ UPLOAD_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$UPLOAD_URL" \
 
 # Check for success with first format
 if [[ "$UPLOAD_RESPONSE" == *"\"id\""* ]]; then
-  echo "✅ Upload successful with format 1 (Documents path)!"
+  echo "✅ Upload successful with format 1 (Shared Documents path)!"
   
   # Extract the URL if available
   WEB_URL=$(echo "$UPLOAD_RESPONSE" | grep -o '"webUrl":"[^"]*' | cut -d'"' -f4 || echo "")
@@ -121,41 +129,41 @@ if [[ "$UPLOAD_RESPONSE" == *"\"id\""* ]]; then
   
   exit 0
 else
-  echo "❌ Format 1 upload failed (Documents path)"
+  echo "❌ Format 1 upload failed (Shared Documents path)"
   if [[ "$UPLOAD_RESPONSE" == *"error"* ]]; then
     ERROR_MSG=$(echo "$UPLOAD_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")
     echo "Error: $ERROR_MSG"
   fi
   
-  # Try with "Shared Documents" path instead of "Documents"
-  echo "🔄 Trying with 'Shared Documents' path..."
-  SHARED_DOCS_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Shared%20Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
-  echo "URL: $SHARED_DOCS_URL"
+  # Try with "Documents" path instead of "Shared Documents"
+  echo "🔄 Trying with 'Documents' path..."
+  DOCS_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+  echo "URL: $DOCS_URL"
   
-  SHARED_DOCS_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$SHARED_DOCS_URL" \
+  DOCS_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$DOCS_URL" \
     -H "Authorization: Bearer $ACCESS_TOKEN" \
     -H "Content-Type: text/csv" \
     -H "Content-Length: $FILE_SIZE" \
     --data-binary "@$CHANGELOG_FILE" 2>&1)
   
-  if [[ "$SHARED_DOCS_RESPONSE" == *"\"id\""* ]]; then
-    echo "✅ Upload successful with 'Shared Documents' path!"
+  if [[ "$DOCS_RESPONSE" == *"\"id\""* ]]; then
+    echo "✅ Upload successful with 'Documents' path!"
     # Extract the URL if available
-    WEB_URL=$(echo "$SHARED_DOCS_RESPONSE" | grep -o '"webUrl":"[^"]*' | cut -d'"' -f4 || echo "")
+    WEB_URL=$(echo "$DOCS_RESPONSE" | grep -o '"webUrl":"[^"]*' | cut -d'"' -f4 || echo "")
     if [[ -n "$WEB_URL" ]]; then
       echo "📄 Changelog uploaded to: $WEB_URL"
     fi
     exit 0
   else
-    echo "❌ 'Shared Documents' path upload failed"
-    if [[ "$SHARED_DOCS_RESPONSE" == *"error"* ]]; then
-      ERROR_MSG=$(echo "$SHARED_DOCS_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")
+    echo "❌ 'Documents' path upload failed"
+    if [[ "$DOCS_RESPONSE" == *"error"* ]]; then
+      ERROR_MSG=$(echo "$DOCS_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")
       echo "Error: $ERROR_MSG"
     fi
   
   # Attempt fallback with format 2: Using items/root: path
   echo "🔄 Trying fallback format 2..."
-  FALLBACK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+  FALLBACK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Shared Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
   echo "URL: $FALLBACK_URL"
   
   FALLBACK_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$FALLBACK_URL" \
@@ -174,24 +182,24 @@ else
       echo "Error: $ERROR_MSG"
     fi
     
-    # Try with "Shared Documents" path with items format
-    echo "🔄 Trying with 'Shared Documents' path (items format)..."
-    SHARED_DOCS_ITEMS_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Shared%20Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
-    echo "URL: $SHARED_DOCS_ITEMS_URL"
+    # Try with "Documents" path with items format
+    echo "🔄 Trying with 'Documents' path (items format)..."
+    DOCS_ITEMS_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+    echo "URL: $DOCS_ITEMS_URL"
     
-    SHARED_DOCS_ITEMS_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$SHARED_DOCS_ITEMS_URL" \
+    DOCS_ITEMS_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$DOCS_ITEMS_URL" \
       -H "Authorization: Bearer $ACCESS_TOKEN" \
       -H "Content-Type: text/csv" \
       -H "Content-Length: $FILE_SIZE" \
       --data-binary "@$CHANGELOG_FILE" 2>&1)
     
-    if [[ "$SHARED_DOCS_ITEMS_RESPONSE" == *"\"id\""* ]]; then
-      echo "✅ 'Shared Documents' items format upload successful!"
+    if [[ "$DOCS_ITEMS_RESPONSE" == *"\"id\""* ]]; then
+      echo "✅ 'Documents' items format upload successful!"
       exit 0
     else
-      echo "❌ 'Shared Documents' items format upload failed"
-      if [[ "$SHARED_DOCS_ITEMS_RESPONSE" == *"error"* ]]; then
-        ERROR_MSG=$(echo "$SHARED_DOCS_ITEMS_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")
+      echo "❌ 'Documents' items format upload failed"
+      if [[ "$DOCS_ITEMS_RESPONSE" == *"error"* ]]; then
+        ERROR_MSG=$(echo "$DOCS_ITEMS_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")
         echo "Error: $ERROR_MSG"
       fi
       
