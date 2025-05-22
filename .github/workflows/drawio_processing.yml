@@ -34,10 +34,9 @@ env:
   
   # Network connectivity settings
   DIAGRAMS_USE_DIRECT_CONNECTION: "true"
-  DIAGRAMS_FORCE_TLS12: "true"
-  
-  # Teams notification configuration
+  DIAGRAMS_FORCE_TLS12: "true"      # Teams notification configuration
   DIAGRAMS_TEAMS_NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
+  DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK: "https://frostaag.webhook.office.com/webhookb2/9cfe5169-8ba4-4923-b8d5-3ceacb07866c@a8d22be6-5bda-4bd7-8278-226c60c037ed/IncomingWebhook/1a12973b2f2d45cc972bfef2bace70b0/8c244c0d-59d9-4113-9646-16bf549a4a64/V26Sqxi96JeWY9ZYvmKydoRmWXY_NAy6wEVTz5o9ole5w1"
 
 permissions:
   contents: write
@@ -479,18 +478,17 @@ jobs:
       - name: Send Teams notification on success
         if: success()
         env:
-          TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
+          TEAMS_WEBHOOK_URL: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
           NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
           GITHUB_ACTOR: ${{ github.actor }}
-          WEBHOOK_CHECK: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK != '' }}
         run: |
           # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
           chmod +x ./scripts/success_notification.sh
           
-          # Debug webhook URL (masked for security)
+          # Debug webhook URL
           if [ -n "$TEAMS_WEBHOOK_URL" ]; then
-            echo "Teams webhook URL is configured (value masked)"
+            echo "Teams webhook URL is configured and ready for notifications"
             echo "TEAMS_WEBHOOK_URL length: ${#TEAMS_WEBHOOK_URL} characters"
           else
             echo "Teams webhook URL is not configured"
@@ -521,7 +519,7 @@ jobs:
       - name: Notify on failure
         if: failure()
         env:
-          TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
+          TEAMS_WEBHOOK_URL: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
           NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
           GITHUB_ACTOR: ${{ github.actor }}
         run: |

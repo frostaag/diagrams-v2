@@ -247,6 +247,7 @@ determine_version() {
   
   # Get the commit message
   local commit_msg=$(git log -1 --format="%s" -- "$file")
+  echo "Commit message for $file: '$commit_msg'"
   
   # Check if file exists in version tracking file
   local version_file="$PNG_FILES_DIR/.versions"
@@ -254,31 +255,44 @@ determine_version() {
   local minor=0
   
   if [[ -f "$version_file" ]]; then
+    echo "Version file exists at $version_file"
     local current_version=$(grep "^$id:" "$version_file" | cut -d: -f2)
     if [[ -n "$current_version" ]]; then
       major=$(echo "$current_version" | cut -d. -f1)
       minor=$(echo "$current_version" | cut -d. -f2)
+      echo "Found existing version for ID $id: $current_version"
+    else
+      echo "No existing version for ID $id, will start with 1.0"
     fi
   else
+    echo "Version file doesn't exist, creating new one at $version_file"
     touch "$version_file"
   fi
   
-  # Determine version increment based on commit message
+  # Determine version based on commit message
   if echo "$commit_msg" | grep -Eiq '(added|new)'; then
-    # Major version increment for new files
-    major=$((major+1))
+    # For new files, always start with version 1.0
+    major=1
     minor=0
+    echo "This is a new file, setting initial version to 1.0"
   else
-    # Minor version increment for updates
+    # For updates, increment minor version
     minor=$((minor+1))
+    echo "This is an update, incrementing minor version to $major.$minor"
   fi
   
   local new_version="${major}.${minor}"
   
   # Update the version file
   if grep -q "^$id:" "$version_file"; then
-    sed -i "s/^$id:.*/$id:$new_version/" "$version_file"
+    echo "Updating existing entry for ID $id to version $new_version"
+    # Use platform-independent way to update the version file
+    # Create a temporary file for sed output
+    local temp_version_file=$(mktemp)
+    sed "s/^$id:.*/$id:$new_version/" "$version_file" > "$temp_version_file"
+    mv "$temp_version_file" "$version_file"
   else
+    echo "Adding new entry for ID $id with version $new_version"
     echo "$id:$new_version" >> "$version_file"
   fi
   
