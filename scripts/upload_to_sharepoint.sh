@@ -35,11 +35,78 @@ if [[ -n "$CUSTOM_SHAREPOINT_URL" ]]; then
   echo "Using custom SharePoint URL: $CUSTOM_SHAREPOINT_URL"
 fi
 
+# Check for network connectivity to Microsoft services
+check_network_connectivity() {
+  local target="$1"
+  echo "🔌 Testing network connectivity to $target..."
+  
+  # Timeout after 5 seconds to avoid hanging
+  if curl -s --max-time 5 -o /dev/null -w "%{http_code}" "$target" | grep -q "2[0-9][0-9]\|3[0-9][0-9]"; then
+    echo "✅ Network connectivity to $target is working"
+    return 0
+  else
+    echo "❌ Cannot connect to $target"
+    return 1
+  fi
+}
+
+# Function to test and fix network connectivity issues
+test_and_fix_connectivity() {
+  local target="$1"
+  local explanation="$2"
+  echo "🔌 Testing network connectivity to $target ($explanation)..."
+  
+  # Try standard connection first
+  if curl -s --max-time 5 -o /dev/null -w "%{http_code}" "$target" | grep -q "2[0-9][0-9]\|3[0-9][0-9]"; then
+    echo "✅ Network connectivity to $target is working"
+    return 0
+  else
+    echo "❌ Cannot connect to $target directly"
+    
+    # Try with different connection options
+    echo "🔄 Trying direct connection with --noproxy '*'..."
+    if curl --noproxy '*' -s --max-time 5 -o /dev/null -w "%{http_code}" "$target" | grep -q "2[0-9][0-9]\|3[0-9][0-9]"; then
+      echo "✅ Direct connection (no proxy) works! Using this for all requests."
+      export USE_DIRECT_CONNECTION="true"
+      return 0
+    fi
+    
+    # Try with insecure mode (only for testing)
+    echo "🔄 Testing with TLS verification disabled (debug only)..."
+    if curl -k --noproxy '*' -s --max-time 5 -o /dev/null -w "%{http_code}" "$target" | grep -q "2[0-9][0-9]\|3[0-9][0-9]"; then
+      echo "⚠️ Connection works with TLS verification disabled. This indicates a certificate issue."
+      echo "⚠️ This mode is not secure and is only used for diagnostics."
+      return 2
+    else
+      echo "❌ All connection methods failed for $target"
+      return 1
+    fi
+  fi
+}
+
 # Function to get access token
 get_access_token() {
-  local token_url="https://login.microsoftonline.com/${SHAREPOINT_TENANT_ID}/oauth2/v2.0/token"
+  echo "========= DIAGNOSTIC INFORMATION ========="
+  # Check system network configuration
+  echo "🖥️ System info:"
+  uname -a
+  echo "🌍 Host connectivity check:"
   
-  # Microsoft Graph API requires specific scopes - we're using .default which includes all granted permissions
+  # Test Microsoft endpoints
+  test_and_fix_connectivity "https://login.microsoftonline.com" "Authentication Endpoint"
+  test_and_fix_connectivity "https://graph.microsoft.com/v1.0/$metadata" "Microsoft Graph API"
+  
+  # Check IP resolution for Microsoft endpoints
+  echo "🔍 DNS resolution check:"
+  host login.microsoftonline.com || echo "DNS lookup failed for login.microsoftonline.com"
+  host graph.microsoft.com || echo "DNS lookup failed for graph.microsoft.com"
+  
+  # Check proxy environment
+  echo "🌐 Proxy settings:"
+  env | grep -i proxy || echo "No proxy environment variables detected"
+  echo "========================================="
+  
+  local token_url="https://login.microsoftonline.com/${SHAREPOINT_TENANT_ID}/oauth2/v2.0/token"
   local scope="https://graph.microsoft.com/.default"
   
   echo "=================== AUTHENTICATION DEBUG ==================="
@@ -47,20 +114,44 @@ get_access_token() {
   echo "Using client ID: ${SHAREPOINT_CLIENT_ID:0:6}... (truncated for security)"
   echo "Tenant ID: ${SHAREPOINT_TENANT_ID}"
   echo "Requested scope: $scope"
-  echo "============================================================"
+  
+  # Set common curl options
+  local curl_base_opts="--connect-timeout 20 --max-time 60 -s"
+  
+  # Apply direct connection if needed based on earlier tests
+  if [ "${USE_DIRECT_CONNECTION}" = "true" ]; then
+    curl_base_opts="$curl_base_opts --noproxy '*'"
+    echo "Using direct connection (no proxy)"
+  fi
   
   # Try multiple times to get token in case of transient issues
-  local max_retries=3
+  local max_retries=5
   local retry=0
   local access_token=""
   
   while [[ $retry -lt $max_retries && -z "$access_token" ]]; do
     echo "Attempt $((retry+1)) to get access token..."
     
-    # Add verbose flag to see connection details without exposing sensitive data
-    echo "POST request to token endpoint with scope $scope"
+    # Progressive retry with more diagnostic options
+    local retry_opts=""
+    if [ $retry -gt 1 ]; then
+      # Add verbose output on later retry attempts
+      retry_opts="-v"
+      echo "Adding verbose output for better diagnostics"
+    fi
+    if [ $retry -gt 2 ]; then
+      # Try with alternate TLS settings on later retries
+      retry_opts="$retry_opts --tlsv1.2"
+      echo "Forcing TLSv1.2"
+    fi
     
-    local response=$(curl -v -s -X POST "$token_url" \
+    # Full curl command with all options
+    local curl_cmd="curl $curl_base_opts $retry_opts -X POST"
+    echo "Using curl options: $curl_base_opts $retry_opts"
+    
+    # Try getting token with current options
+    echo "Sending request to token endpoint..."
+    local response=$(eval $curl_cmd "$token_url" \
       -H "Content-Type: application/x-www-form-urlencoded" \
       -d "client_id=${SHAREPOINT_CLIENT_ID}&scope=${scope}&client_secret=${SHAREPOINT_CLIENT_SECRET}&grant_type=client_credentials" 2>&1)
     
@@ -71,6 +162,15 @@ get_access_token() {
         echo "✅ Access token obtained successfully."
         echo "Token length: ${#access_token} characters"
         echo "First few characters: ${access_token:0:10}..."
+        
+        # Save successful connection method for future use
+        if [ "${USE_DIRECT_CONNECTION}" = "true" ]; then
+          echo "--noproxy '*'" > /tmp/sharepoint_connection_method.txt
+        fi
+        if [ -n "$retry_opts" ]; then
+          echo "$retry_opts" >> /tmp/sharepoint_connection_method.txt
+        fi
+        
         break
       fi
     fi
@@ -79,7 +179,8 @@ get_access_token() {
     echo "❌ Failed to get access token on attempt $((retry+1))"
     
     # Check for specific error patterns
-    if [[ "$response" == *"error"* ]]; then
+    if [[ "$response" == *"error"* && "$response" == *"{"* ]]; then
+      # JSON error response
       local error_code=$(echo "$response" | grep -o '"error":"[^"]*' | cut -d'"' -f4)
       local error_desc=$(echo "$response" | grep -o '"error_description":"[^"]*' | cut -d'"' -f4 || echo "No detailed description")
       echo "Error code: $error_code"
@@ -105,23 +206,35 @@ get_access_token() {
           ;;
       esac
     else
-      echo "Unexpected response or connection error. Full response (sensitive data removed):"
-      # Print response but remove any potential secrets
-      echo "$response" | grep -v "client_secret" | grep -v "access_token"
+      # Network or non-JSON error
+      echo "Network connectivity or TLS handshake issue. Details:"
+      
+      # Show connection-related errors
+      if [[ "$response" == *"SSL"* || "$response" == *"TLS"* || "$response" == *"certificate"* ]]; then
+        echo "⚠️ SSL/TLS ERROR DETECTED:"
+        echo "$response" | grep -i -E 'SSL|TLS|certificate|handshake' | head -5
+        echo "This usually indicates a TLS/SSL negotiation problem with Microsoft servers."
+        echo "Try running with --tlsv1.2 flag to force TLS version."
+      elif [[ "$response" == *"Could not resolve host"* ]]; then
+        echo "⚠️ DNS RESOLUTION ERROR:"
+        echo "$response" | grep -i "Could not resolve host"
+        echo "This indicates a DNS issue. Check network connectivity and DNS settings."
+      elif [[ "$response" == *"Connection refused"* || "$response" == *"Connection timed out"* ]]; then
+        echo "⚠️ CONNECTION ERROR:"
+        echo "$response" | grep -i -E 'Connection refused|Connection timed out'
+        echo "This indicates a network connectivity issue, possibly due to a firewall or proxy."
+      else
+        echo "Unexpected response or connection error. Response snippet (sensitive data removed):"
+        echo "$response" | grep -v "client_secret" | grep -v "access_token" | head -10
+      fi
     fi
     
     retry=$((retry+1))
     
     if [[ $retry -lt $max_retries ]]; then
-      local wait_time=$((5 * retry))
-      echo "Retrying in $wait_time seconds (attempt $retry of $max_retries)..."
+      local wait_time=$((10 * retry))
+      echo "Retrying in $wait_time seconds (attempt $((retry+1)) of $max_retries)..."
       sleep $wait_time
-      
-      # Verify the environment variables again before retry
-      echo "Retrying with:"
-      echo "- Client ID length: ${#SHAREPOINT_CLIENT_ID} characters"
-      echo "- Client Secret length: ${#SHAREPOINT_CLIENT_SECRET} characters" 
-      echo "- Tenant ID: $SHAREPOINT_TENANT_ID"
     fi
   done
   
@@ -275,9 +388,35 @@ upload_to_sharepoint() {
   fi
   
   # Now try with Graph API formats
+  # Check Microsoft Graph API connectivity first
+  if ! check_network_connectivity "https://graph.microsoft.com/v1.0/$metadata"; then
+    echo "❌ Unable to reach Microsoft Graph API endpoints"
+    echo "The authentication worked but the Microsoft Graph API is unreachable."
+    echo "This is likely a network connectivity issue. Please check:"
+    echo "1. Your network firewall settings"
+    echo "2. Any VPN that might be blocking connections"
+    echo "3. Corporate proxy settings"
+    echo "4. GitHub Actions network configuration"
+    
+    # Try with a direct connection as a fallback
+    echo "🔄 Trying to connect with --noproxy '*' option..."
+    if curl --noproxy '*' -s --max-time 5 -o /dev/null -w "%{http_code}" "https://graph.microsoft.com/v1.0/$metadata" | grep -q "2[0-9][0-9]\|3[0-9][0-9]"; then
+      echo "✅ Direct connection to Graph API works! Using this for all requests."
+      export USE_DIRECT_CONNECTION="true"
+    else
+      echo "❌ Direct connection also failed."
+    fi
+  fi
+
   echo "=============== TESTING SITE ACCESS FORMATS ==============="
   echo "Access token status: $([ -n "$access_token" ] && echo "✅ Present (${#access_token} characters)" || echo "❌ Missing")"
   echo "============================================================"
+  
+  # Use a more focused list of formats since we know what worked in Postman
+  site_formats=(
+    "https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}"
+    "https://graph.microsoft.com/v1.0/sites/frostaag.sharepoint.com:/sites/DatasphereFileConnector"
+  )
   
   for format in "${site_formats[@]}"; do
     echo "🔍 Trying site format: $format"
@@ -288,8 +427,14 @@ upload_to_sharepoint() {
     # Use -v flag to see detailed HTTP transaction but hide from normal output
     echo "  Sending request with curl..."
     
+    # Set curl options based on earlier connectivity tests
+    local curl_cmd="curl -v -s --connect-timeout 15 --max-time 30"
+    if [ "${USE_DIRECT_CONNECTION}" = "true" ]; then
+      curl_cmd="$curl_cmd --noproxy '*'"
+    fi
+    
     # Capture full verbose output to check for TLS/SSL or networking issues
-    local verbose_output=$(curl -v -s -X GET "$format" \
+    local verbose_output=$($curl_cmd -X GET "$format" \
       -H "Authorization: Bearer $access_token" \
       -H "Accept: application/json" 2>&1)
       
@@ -444,7 +589,19 @@ upload_to_sharepoint() {
   # Check for document libraries
   echo "Retrieving document libraries..."
   
-  local drives_response=$(curl -s -X GET "${site_url}/drives" \
+  # Apply connectivity settings
+  local curl_opts="-s --connect-timeout 20 --max-time 60"
+  if [ "${USE_DIRECT_CONNECTION}" = "true" ]; then
+    curl_opts="$curl_opts --noproxy '*'"
+  fi
+  
+  # Try with optimized TLS settings
+  if [ -f /tmp/sharepoint_connection_method.txt ]; then
+    echo "Using previously successful connection settings"
+    curl_opts="$curl_opts $(cat /tmp/sharepoint_connection_method.txt)"
+  fi
+  
+  local drives_response=$(curl $curl_opts -X GET "${site_url}/drives" \
     -H "Authorization: Bearer $access_token" \
     -H "Accept: application/json")
   
@@ -621,8 +778,21 @@ upload_to_sharepoint() {
     echo "Upload attempt $((retry+1)) of $max_retries..."
     echo "Using path: $drive_path"
     
-    # Upload with verbose output to capture headers
-    local response=$(curl -v -X PUT "$drive_path" \
+    # Upload with improved connection options
+    local curl_opts="-v --connect-timeout 30 --max-time 120"
+    
+    # Apply successful connectivity settings from earlier
+    if [ "${USE_DIRECT_CONNECTION}" = "true" ]; then
+      curl_opts="$curl_opts --noproxy '*'"
+    fi
+    
+    # Apply any saved options from successful auth attempt
+    if [ -f /tmp/sharepoint_connection_method.txt ]; then
+      curl_opts="$curl_opts $(cat /tmp/sharepoint_connection_method.txt)"
+    fi
+    
+    echo "Using curl options: $curl_opts"
+    local response=$(curl $curl_opts -X PUT "$drive_path" \
       -H "Authorization: Bearer $access_token" \
       -H "Content-Type: text/csv" \
       -H "Content-Length: $file_size" \

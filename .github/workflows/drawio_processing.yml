@@ -27,8 +27,13 @@ env:
   DIAGRAMS_SHAREPOINT_FOLDER: "Diagrams"
   DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME: "Diagrams_Changelog.csv"
   DIAGRAMS_SHAREPOINT_URL: "https://frostaag.sharepoint.com/sites/DatasphereFileConnector"
-  # Use direct formats that worked in testing
+  # Use direct formats from successful testing
   DIAGRAMS_SHAREPOINT_SITE_FORMAT: "e39939c2-992f-47cc-8b32-20aa466d71f4"
+  DIAGRAMS_SHAREPOINT_DRIVE_ID: "21e1e0f0-9247-45ab-9f8c-1d50c5c077db"
+  
+  # Network connectivity settings
+  DIAGRAMS_USE_DIRECT_CONNECTION: "true"
+  DIAGRAMS_FORCE_TLS12: "true"
   
   # Teams notification configuration
   DIAGRAMS_TEAMS_NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
@@ -214,10 +219,10 @@ jobs:
             echo "No changes to commit"
           fi
 
-      - name: Upload to SharePoint
-        continue-on-error: true  # Allow workflow to continue even if SharePoint upload fails
+      - name: Test SharePoint Connectivity
+        id: sharepoint_test
+        continue-on-error: true
         run: |
-          # Print variables for debugging (safe values only, no secrets)
           echo "=== SHAREPOINT CONFIGURATION ==="
           echo "TENANT_ID: ${SHAREPOINT_TENANT_ID}"
           echo "SITE_ID: ${SHAREPOINT_SITE_ID}"
@@ -250,35 +255,26 @@ jobs:
           
           if [ "$CREDENTIAL_ISSUES" = "true" ]; then
             echo "⚠️ Some credentials are missing. SharePoint upload will likely fail."
+            echo "sharepoint_credentials_ok=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
-          
+
           echo "==============================="
           
-          echo "Attempting to upload to SharePoint..."
+          echo "🔍 Testing SharePoint connectivity..."
           
-          # Run with test mode first to debug connection only
-          echo "First checking SharePoint connection without uploading..."
+          # Environment variables for network connectivity
+          export USE_DIRECT_CONNECTION="true"  # Avoid proxy issues
+          export CURL_OPTS="--noproxy '*' --tlsv1.2 --connect-timeout 30 --max-time 60"
           
-          if TEST_MODE=true bash ./scripts/upload_to_sharepoint.sh; then
-            echo "SharePoint connection test successful! Now trying actual upload..."
-            
-            # If connection test succeeds, try the actual upload
-            if bash ./scripts/upload_to_sharepoint.sh; then
-              echo "SharePoint upload completed successfully."
-            else
-              echo "::warning::SharePoint upload failed but connection was successful. Check drive/folder permissions."
-            fi
+          # Run the test script with test mode to check connectivity without uploading
+          if TEST_MODE=true bash ./scripts/advanced_sharepoint_test.sh -c "$SHAREPOINT_CLIENT_ID" \
+             -s "$SHAREPOINT_CLIENT_SECRET" -t "$SHAREPOINT_TENANT_ID" -i "$SHAREPOINT_SITE_ID"; then
+            echo "🟢 SharePoint connectivity test successful!"
+            echo "sharepoint_connectivity_ok=true" >> $GITHUB_OUTPUT
           else
-            echo "::warning::SharePoint connection test failed. This is likely due to missing or invalid credentials."
-            echo "::warning::Make sure you have set the following secrets and variables:"
-            echo "::warning::  - DIAGRAMS_SHAREPOINT_CLIENT_ID (variable): ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID != '' && 'Set ✓' || 'NOT SET!' }}"
-            echo "::warning::  - DIAGRAMS_SHAREPOINT_CLIENTSECRET (secret): ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENTSECRET != '' && 'Set ✓' || 'NOT SET!' }}"
-            echo "::warning::  - DIAGRAMS_SHAREPOINT_TENANT_ID (variable): ${{ vars.DIAGRAMS_SHAREPOINT_TENANT_ID != '' && 'Set ✓' || 'NOT SET!' }}"
-            echo "::warning::  - DIAGRAMS_SHAREPOINT_SITE_ID (variable): ${{ vars.DIAGRAMS_SHAREPOINT_SITE_ID != '' && 'Set ✓' || 'NOT SET!' }}"
-            echo "::warning::  - DIAGRAMS_SHAREPOINT_URL (variable): ${{ vars.DIAGRAMS_SHAREPOINT_URL != '' && 'Set ✓' || 'NOT SET!' }}"
-            echo "::warning::IMPORTANT: Based on your tests, these formats worked:"
-            echo "::warning::1. Site path: frostaag.sharepoint.com:/sites/DatasphereFileConnector"
-            echo "::warning::2. Direct site ID: e39939c2-992f-47cc-8b32-20aa466d71f4"
+            echo "🔴 SharePoint connectivity test failed."
+            echo "sharepoint_connectivity_ok=false" >> $GITHUB_OUTPUT
           fi
         env:
           SHAREPOINT_CLIENT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID }}
@@ -289,6 +285,113 @@ jobs:
           SHAREPOINT_FOLDER: ${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}
           SHAREPOINT_OUTPUT_FILENAME: ${{ env.DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME }}
           CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
+
+      - name: Create Diagrams folder in SharePoint if needed
+        if: env.SHAREPOINT_SITE_ID != '' && env.SHAREPOINT_CLIENT_ID != ''
+        run: |
+          echo "📁 Checking if Documents/Diagrams folder exists in SharePoint..."
+          
+          # Auth to Microsoft Graph
+          echo "Getting access token..."
+          AUTH_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X POST \
+            "https://login.microsoftonline.com/${SHAREPOINT_TENANT_ID}/oauth2/v2.0/token" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "client_id=${SHAREPOINT_CLIENT_ID}&scope=https://graph.microsoft.com/.default&client_secret=${SHAREPOINT_CLIENT_SECRET}&grant_type=client_credentials")
+          
+          ACCESS_TOKEN=$(echo "$AUTH_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+          if [[ -z "$ACCESS_TOKEN" ]]; then
+            echo "::warning::Could not get access token to check folder. Will try to upload anyway."
+            exit 0
+          fi
+          
+          # Check if Diagrams folder exists
+          FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${SHAREPOINT_DRIVE_ID}/root:/Documents/Diagrams"
+          FOLDER_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X GET "$FOLDER_CHECK_URL" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Accept: application/json")
+          
+          if [[ "$FOLDER_RESPONSE" == *"error"* && "$FOLDER_RESPONSE" == *"itemNotFound"* ]]; then
+            echo "📁 Diagrams folder does not exist. Creating it..."
+            
+            # Create Diagrams folder
+            CREATE_FOLDER_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${SHAREPOINT_DRIVE_ID}/root:/Documents:/children"
+            CREATE_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X POST "$CREATE_FOLDER_URL" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"name":"Diagrams","folder":{},"@microsoft.graph.conflictBehavior":"replace"}')
+            
+            if [[ "$CREATE_RESPONSE" == *"id"* ]]; then
+              echo "✅ Diagrams folder created successfully."
+            else
+              echo "::warning::Failed to create Diagrams folder. Will try to upload anyway."
+            fi
+          elif [[ "$FOLDER_RESPONSE" == *"id"* ]]; then
+            echo "✅ Diagrams folder already exists."
+          else
+            echo "::warning::Could not check if Diagrams folder exists. Will try to upload anyway."
+          fi
+        env:
+          SHAREPOINT_CLIENT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID }}
+          SHAREPOINT_CLIENT_SECRET: ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENTSECRET }}
+          SHAREPOINT_TENANT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_TENANT_ID }}
+          SHAREPOINT_SITE_ID: ${{ vars.DIAGRAMS_SHAREPOINT_SITE_ID }}
+          SHAREPOINT_DRIVE_ID: ${{ env.DIAGRAMS_SHAREPOINT_DRIVE_ID }}
+
+      - name: Upload changelog to SharePoint
+        continue-on-error: true  # Allow workflow to continue even if SharePoint upload fails
+        run: |
+          echo "📤 Uploading changelog to SharePoint..."
+          
+          # Make scripts executable again to be safe
+          chmod +x ./scripts/fixed_sharepoint_upload.sh
+          chmod +x ./scripts/upload_to_sharepoint.sh
+          
+          # Set explicit environment variables for fixed script
+          export SHAREPOINT_DRIVE_ID="21e1e0f0-9247-45ab-9f8c-1d50c5c077db"
+          export USE_DIRECT_CONNECTION="true"
+          export FORCE_TLS="true"
+          
+          echo "SharePoint configuration:"
+          echo "- Site ID: ${SHAREPOINT_SITE_ID}"
+          echo "- Drive ID: ${SHAREPOINT_DRIVE_ID}"
+          echo "- Folder: ${SHAREPOINT_FOLDER}"
+          echo "- Target path: Documents/${SHAREPOINT_FOLDER}/${SHAREPOINT_OUTPUT_FILENAME}"
+          
+          # Use the enhanced fixed script with direct drive ID
+          if bash ./scripts/fixed_sharepoint_upload.sh; then
+            echo "✅ SharePoint upload completed successfully."
+            echo "## SharePoint Upload Status" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Successfully uploaded changelog to SharePoint" >> $GITHUB_STEP_SUMMARY
+            echo "File URL: https://frostaag.sharepoint.com/sites/DatasphereFileConnector/Documents/${SHAREPOINT_FOLDER}/${SHAREPOINT_OUTPUT_FILENAME}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "::warning::SharePoint upload failed. Please check the logs for details."
+            echo "## SharePoint Upload Status" >> $GITHUB_STEP_SUMMARY
+            echo "❌ Failed to upload changelog to SharePoint" >> $GITHUB_STEP_SUMMARY
+            echo "Please review the following:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Verify your Azure App registration has the necessary permissions" >> $GITHUB_STEP_SUMMARY
+            echo "2. Ensure the credentials are correctly configured" >> $GITHUB_STEP_SUMMARY
+            echo "3. Check network connectivity from GitHub Actions to Microsoft Graph API" >> $GITHUB_STEP_SUMMARY
+            
+            # Fallback to regular upload script as a backup attempt
+            echo "🔄 Attempting upload with original script as fallback..."
+            if bash ./scripts/upload_to_sharepoint.sh; then
+              echo "✅ Fallback SharePoint upload succeeded."
+              echo "✅ Successfully uploaded using fallback method" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ Both SharePoint upload methods failed."
+            fi
+          fi
+        env:
+          SHAREPOINT_CLIENT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID }}
+          SHAREPOINT_CLIENT_SECRET: ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENTSECRET }}
+          SHAREPOINT_TENANT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_TENANT_ID }}
+          SHAREPOINT_SITE_ID: ${{ vars.DIAGRAMS_SHAREPOINT_SITE_ID }}
+          SHAREPOINT_URL: ${{ vars.DIAGRAMS_SHAREPOINT_URL }}
+          SHAREPOINT_FOLDER: ${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}
+          SHAREPOINT_OUTPUT_FILENAME: ${{ env.DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME }}
+          CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
+          USE_DIRECT_CONNECTION: "true"
+          FORCE_TLS: "true"
 
       - name: Send Teams notification on success
         if: success()
