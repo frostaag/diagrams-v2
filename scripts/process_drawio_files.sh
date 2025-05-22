@@ -9,7 +9,7 @@ PNG_FILES_DIR="png_files"
 COUNTER_FILE="${DIAGRAMS_COUNTER_FILE:-${DRAWIO_FILES_DIR}/.counter}"
 CHANGELOG_FILE="${DIAGRAMS_CHANGELOG_FILE:-${PNG_FILES_DIR}/CHANGELOG.csv}"
 PNG_SCALE="${DIAGRAMS_PNG_SCALE:-${PNG_SCALE:-2.0}}"
-PNG_QUALITY="${DIAGRAMS_PNG_QUALITY:-${PNG_QUALITY:-100}}"
+PNG_QUALITY="${DIAGRAMS_PNG_QUALITY:-${PNG_QUALITY:-500}}"
 SPECIFIC_FILE="${SPECIFIC_FILE:-}"
 
 # Function to detect changed files
@@ -319,6 +319,41 @@ update_changelog() {
   # Create changelog entry
   local entry="$current_date,$current_time,\"$filename_without_ext\",\"$file\",\"Converted to PNG\",\"$commit_msg\",$version,$commit_hash,\"$author_name\""
   
+  # Create lock file for atomic updates
+  local lock_file="${CHANGELOG_FILE}.lock"
+  
+  # Try to acquire lock - only continue if we can create the lock file
+  if ! mkdir "$lock_file" 2>/dev/null; then
+    echo "Another process is updating the changelog. Waiting for lock..."
+    local max_wait=30
+    local wait_count=0
+    
+    # Wait for the lock to be released
+    while [ $wait_count -lt $max_wait ] && ! mkdir "$lock_file" 2>/dev/null; do
+      sleep 1
+      wait_count=$((wait_count + 1))
+      echo "Waiting for lock... ($wait_count/$max_wait)"
+    done
+    
+    # If we still can't get the lock after waiting, try to force it
+    if ! mkdir "$lock_file" 2>/dev/null; then
+      echo "Warning: Lock file exists for too long. Checking if process is still active..."
+      
+      # If the lock is more than 5 minutes old, assume it's stale and force it
+      if [ -d "$lock_file" ] && [ $(($(date +%s) - $(stat -c %Y "$lock_file"))) -gt 300 ]; then
+        echo "Lock appears to be stale. Removing and continuing."
+        rm -rf "$lock_file"
+        mkdir "$lock_file"
+      else
+        echo "Error: Cannot acquire changelog lock. Skipping changelog update."
+        return 1
+      fi
+    fi
+  fi
+  
+  # We now have the lock
+  trap 'rm -rf "$lock_file"' EXIT
+  
   # Make sure changelog file exists
   if [[ ! -f "$CHANGELOG_FILE" ]]; then
     echo "Creating new changelog file: $CHANGELOG_FILE"
@@ -326,13 +361,20 @@ update_changelog() {
     echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
   fi
   
-  # Add to changelog
-  echo "$entry" >> "$CHANGELOG_FILE"
+  # Atomic update of the changelog file to prevent conflicts
+  local temp_file=$(mktemp)
+  cat "$CHANGELOG_FILE" > "$temp_file"
+  echo "$entry" >> "$temp_file"
+  mv "$temp_file" "$CHANGELOG_FILE"
   
   echo "Added entry to changelog for $basename (version $version)"
   
   # Touch the changelog file to update its timestamp
   touch "$CHANGELOG_FILE"
+  
+  # Release the lock
+  rm -rf "$lock_file"
+  trap - EXIT
 }
 
 # Function to generate GitHub step summary

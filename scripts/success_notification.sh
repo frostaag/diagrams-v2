@@ -28,7 +28,7 @@ MESSAGE+="${GITHUB_WORKFLOW}<br><br>"
 MESSAGE+="**Commit**<br>"
 MESSAGE+="${GITHUB_SHA}<br><br>"
 MESSAGE+="**Triggered by**<br>"
-MESSAGE+="${GITHUB_ACTOR:-System}<br><br>"
+MESSAGE+="${AUTHOR_NAME:-${GITHUB_ACTOR:-System}}<br><br>"
 MESSAGE+="**Run ID**<br>"
 MESSAGE+="${GITHUB_RUN_ID}<br><br>"
 

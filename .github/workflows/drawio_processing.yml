@@ -11,11 +11,16 @@ on:
         required: false
         default: ''
 
+# Ensure only one workflow at a time can run to prevent conflicts
+concurrency:
+  group: drawio-processing
+  cancel-in-progress: false
+
 env:
   # Draw.io configuration
   DIAGRAMS_DRAWIO_VERSION: "26.2.2"
   DIAGRAMS_PNG_SCALE: "2.0"
-  DIAGRAMS_PNG_QUALITY: "100"
+  DIAGRAMS_PNG_QUALITY: "500"
   
   # File paths
   DIAGRAMS_CHANGELOG_FILE: "png_files/CHANGELOG.csv"
@@ -37,7 +42,6 @@ env:
   DIAGRAMS_FORCE_TLS12: "true"      # Teams notification configuration
   DIAGRAMS_TEAMS_NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
   DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK: "https://frostaag.webhook.office.com/webhookb2/9cfe5169-8ba4-4923-b8d5-3ceacb07866c@a8d22be6-5bda-4bd7-8278-226c60c037ed/IncomingWebhook/1a12973b2f2d45cc972bfef2bace70b0/8c244c0d-59d9-4113-9646-16bf549a4a64/V26Sqxi96JeWY9ZYvmKydoRmWXY_NAy6wEVTz5o9ole5w1"
-
 permissions:
   contents: write
 
@@ -485,6 +489,10 @@ jobs:
           # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
           chmod +x ./scripts/success_notification.sh
+          
+          # Get author name from Git
+          AUTHOR_NAME=$(git log -1 --format="%an" HEAD)
+          export AUTHOR_NAME
           
           # Debug webhook URL
           if [ -n "$TEAMS_WEBHOOK_URL" ]; then
