@@ -98,9 +98,9 @@ FILE_SIZE=$(wc -c < "$CHANGELOG_FILE")
 # Try multiple path formats for maximum compatibility
 echo "Trying multiple path formats to ensure compatibility..."
 
-# Option 1: Using the b! format with /root:/Documents/path
+# Option 1: Using the b! format with /root:/Documents/path (standard path)
 UPLOAD_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
-echo "🔄 Trying upload with URL (format 1): $UPLOAD_URL"
+echo "🔄 Trying upload with URL (format 1 - Documents): $UPLOAD_URL"
 
 # Upload with curl
 UPLOAD_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$UPLOAD_URL" \
@@ -111,7 +111,7 @@ UPLOAD_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$UPLOAD_URL" \
 
 # Check for success with first format
 if [[ "$UPLOAD_RESPONSE" == *"\"id\""* ]]; then
-  echo "✅ Upload successful with format 1!"
+  echo "✅ Upload successful with format 1 (Documents path)!"
   
   # Extract the URL if available
   WEB_URL=$(echo "$UPLOAD_RESPONSE" | grep -o '"webUrl":"[^"]*' | cut -d'"' -f4 || echo "")
@@ -121,13 +121,37 @@ if [[ "$UPLOAD_RESPONSE" == *"\"id\""* ]]; then
   
   exit 0
 else
-  echo "❌ Format 1 upload failed"
+  echo "❌ Format 1 upload failed (Documents path)"
   if [[ "$UPLOAD_RESPONSE" == *"error"* ]]; then
     ERROR_MSG=$(echo "$UPLOAD_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")
     echo "Error: $ERROR_MSG"
-  else
-    echo "Response: $UPLOAD_RESPONSE"
   fi
+  
+  # Try with "Shared Documents" path instead of "Documents"
+  echo "🔄 Trying with 'Shared Documents' path..."
+  SHARED_DOCS_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Shared%20Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+  echo "URL: $SHARED_DOCS_URL"
+  
+  SHARED_DOCS_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$SHARED_DOCS_URL" \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -H "Content-Type: text/csv" \
+    -H "Content-Length: $FILE_SIZE" \
+    --data-binary "@$CHANGELOG_FILE" 2>&1)
+  
+  if [[ "$SHARED_DOCS_RESPONSE" == *"\"id\""* ]]; then
+    echo "✅ Upload successful with 'Shared Documents' path!"
+    # Extract the URL if available
+    WEB_URL=$(echo "$SHARED_DOCS_RESPONSE" | grep -o '"webUrl":"[^"]*' | cut -d'"' -f4 || echo "")
+    if [[ -n "$WEB_URL" ]]; then
+      echo "📄 Changelog uploaded to: $WEB_URL"
+    fi
+    exit 0
+  else
+    echo "❌ 'Shared Documents' path upload failed"
+    if [[ "$SHARED_DOCS_RESPONSE" == *"error"* ]]; then
+      ERROR_MSG=$(echo "$SHARED_DOCS_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")
+      echo "Error: $ERROR_MSG"
+    fi
   
   # Attempt fallback with format 2: Using items/root: path
   echo "🔄 Trying fallback format 2..."
@@ -150,24 +174,65 @@ else
       echo "Error: $ERROR_MSG"
     fi
     
-    # Last attempt with format 3: Try direct Diagrams folder
-    echo "🔄 Trying fallback format 3 (direct to Diagrams folder)..."
-    LAST_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Diagrams/${OUTPUT_FILENAME}:/content"
-    echo "URL: $LAST_URL"
+    # Try with "Shared Documents" path with items format
+    echo "🔄 Trying with 'Shared Documents' path (items format)..."
+    SHARED_DOCS_ITEMS_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Shared%20Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+    echo "URL: $SHARED_DOCS_ITEMS_URL"
     
-    LAST_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$LAST_URL" \
+    SHARED_DOCS_ITEMS_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$SHARED_DOCS_ITEMS_URL" \
       -H "Authorization: Bearer $ACCESS_TOKEN" \
       -H "Content-Type: text/csv" \
       -H "Content-Length: $FILE_SIZE" \
       --data-binary "@$CHANGELOG_FILE" 2>&1)
     
-    if [[ "$LAST_RESPONSE" == *"\"id\""* ]]; then
-      echo "✅ Format 3 upload successful!"
+    if [[ "$SHARED_DOCS_ITEMS_RESPONSE" == *"\"id\""* ]]; then
+      echo "✅ 'Shared Documents' items format upload successful!"
       exit 0
     else
-      echo "❌ All upload formats failed"
-      echo "Final error: $(echo "$LAST_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")"
-      exit 1
+      echo "❌ 'Shared Documents' items format upload failed"
+      if [[ "$SHARED_DOCS_ITEMS_RESPONSE" == *"error"* ]]; then
+        ERROR_MSG=$(echo "$SHARED_DOCS_ITEMS_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")
+        echo "Error: $ERROR_MSG"
+      fi
+      
+      # Last attempt with format 3: Try direct Diagrams folder
+      echo "🔄 Trying fallback format 3 (direct to Diagrams folder)..."
+      LAST_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Diagrams/${OUTPUT_FILENAME}:/content"
+      echo "URL: $LAST_URL"
+      
+      LAST_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$LAST_URL" \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: text/csv" \
+        -H "Content-Length: $FILE_SIZE" \
+        --data-binary "@$CHANGELOG_FILE" 2>&1)
+      
+      if [[ "$LAST_RESPONSE" == *"\"id\""* ]]; then
+        echo "✅ Format 3 upload successful!"
+        exit 0
+      else
+        echo "❌ All standard upload formats failed"
+        echo "Final error: $(echo "$LAST_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")"
+        
+        # Try directly using drive ID without the b! prefix as a last resort
+        echo "🔄 Trying last resort with base drive ID..."
+        BASE_DRIVE_ID="${DRIVE_ID#b!}"  # Remove b! prefix if present
+        BASE_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${BASE_DRIVE_ID}/root:/Shared%20Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+        
+        BASE_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$BASE_URL" \
+          -H "Authorization: Bearer $ACCESS_TOKEN" \
+          -H "Content-Type: text/csv" \
+          -H "Content-Length: $FILE_SIZE" \
+          --data-binary "@$CHANGELOG_FILE" 2>&1)
+        
+        if [[ "$BASE_RESPONSE" == *"\"id\""* ]]; then
+          echo "✅ Last resort upload successful!"
+          exit 0
+        else
+          echo "❌ All upload formats failed"
+          echo "Final error: $(echo "$BASE_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")"
+          exit 1
+        fi
+      fi
     fi
   fi
 fi
