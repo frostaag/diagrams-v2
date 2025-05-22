@@ -9,7 +9,7 @@ PNG_FILES_DIR="png_files"
 COUNTER_FILE="${DIAGRAMS_COUNTER_FILE:-${DRAWIO_FILES_DIR}/.counter}"
 CHANGELOG_FILE="${DIAGRAMS_CHANGELOG_FILE:-${PNG_FILES_DIR}/CHANGELOG.csv}"
 PNG_SCALE="${DIAGRAMS_PNG_SCALE:-${PNG_SCALE:-2.0}}"
-PNG_QUALITY="${DIAGRAMS_PNG_QUALITY:-${PNG_QUALITY:-100}}" # Changed default from 500 to 100
+PNG_QUALITY="${DIAGRAMS_PNG_QUALITY:-${PNG_QUALITY:-100}}"
 SPECIFIC_FILE="${SPECIFIC_FILE:-}"
 TRIGGERING_SHA="${GITHUB_SHA}" # Use GITHUB_SHA for the triggering commit
 
@@ -71,33 +71,36 @@ detect_changed_files() {
 # Function to assign IDs to new files
 assign_ids() {
   local file="$1"
-  local basename=$(basename "$file")
+  local basename
+  basename=$(basename "$file")
   
   # Check if file already has an ID pattern (###) or is a numeric filename
-  if [[ "$basename" =~ \([0-9]{3}\)\.drawio$ ]]; then
+  if [[ "$basename" =~ \\([0-9]{3}\\)\\.drawio$ ]] || [[ "$basename" =~ ^[0-9]+\\.drawio$ ]]; then
     echo "File $basename already has an ID, skipping ID assignment."
-    return 0
-  elif [[ "$basename" =~ ^[0-9]+\.drawio$ ]]; then
-    echo "File $basename has a numeric name, preserving as-is."
     return 0
   fi
   
   # Read current counter
-  local counter=$(<"$COUNTER_FILE")
+  local counter
+  counter=$(<"$COUNTER_FILE")
   # Increment counter
-  local new_counter=$(printf "%03d" $((10#$counter + 1)))
+  local new_counter_val
+  new_counter_val=$((10#$counter + 1))
+  local new_counter_str
+  new_counter_str=$(printf "%03d" $new_counter_val)
   # New filename with ID
   local filename_without_ext="${basename%.drawio}"
-  local new_filename="${filename_without_ext} (${new_counter}).drawio"
+  local new_filename="${filename_without_ext} (${new_counter_str}).drawio"
+  # Ensure DRAWIO_FILES_DIR is used for the new path
   local new_filepath="${DRAWIO_FILES_DIR}/${new_filename}"
   
   # Rename the file
   mv "$file" "$new_filepath"
   
   # Update counter file
-  echo "$new_counter" > "$COUNTER_FILE"
+  echo "$new_counter_str" > "$COUNTER_FILE"
   
-  echo "Assigned ID $new_counter to $basename -> $new_filename"
+  echo "Assigned ID $new_counter_str to $basename -> $new_filename"
   # Update the file variable for further processing
   echo "PROCESSED_FILE=$new_filepath" >> $GITHUB_ENV
 }
@@ -105,14 +108,15 @@ assign_ids() {
 # Function to extract ID from filename
 extract_id() {
   local file="$1"
-  local basename=$(basename "$file")
+  local basename
+  basename=$(basename "$file")
   
-  if [[ "$basename" =~ \(([0-9]{3})\)\.drawio$ ]]; then
+  if [[ "$basename" =~ \\(([0-9]{3})\\)\\.drawio$ ]]; then
     echo "${BASH_REMATCH[1]}"
-  elif [[ "$basename" =~ ^([0-9]+)\.drawio$ ]]; then
+  elif [[ "$basename" =~ ^([0-9]+)\\.drawio$ ]]; then # Also match if filename is just digits.drawio
     echo "${BASH_REMATCH[1]}"
   else
-    echo ""
+    echo "" # Return empty if no ID pattern matches
   fi
 }
 
@@ -238,172 +242,203 @@ create_placeholder_png() {
 # Function to determine version increment
 determine_version() {
   local file="$1"
-  local id=$(extract_id "$file")
+  echo "[determine_version] Called for file: $file" >&2
+  local id
+  id=$(extract_id "$file")
   
   if [[ -z "$id" ]]; then
-    echo "Error: Could not extract ID from $file" >&2
-    return 1
+    echo "[determine_version] Error: Could not extract ID from $file. Cannot determine version." >&2
+    return 1 # Signal error
   fi
   
-  # Get the commit message
-  local commit_msg=$(git log -1 --format="%s" -- "$file")
-  echo "Commit message for $file: '$commit_msg'" >&2
+  local commit_msg
+  commit_msg=$(git log -1 --format="%s" -- "$file")
+  echo "[determine_version] Commit message for $file (for versioning logic): '$commit_msg'" >&2
   
-  # Check if file exists in version tracking file
   local version_file="$PNG_FILES_DIR/.versions"
-  local major=1
-  local minor=0
+  local major=1 # Default major version
+  local minor=0 # Default minor version
   
   if [[ -f "$version_file" ]]; then
-    echo "Version file exists at $version_file" >&2
-    local current_version_line=$(grep "^$id:" "$version_file")
+    echo "[determine_version] Version file exists at $version_file" >&2
+    local current_version_line
+    current_version_line=$(grep "^$id:" "$version_file")
     if [[ -n "$current_version_line" ]]; then
-      local current_version=$(echo "$current_version_line" | cut -d: -f2)
-      # Ensure current_version is in major.minor format, default to 0 if not
-      if [[ "$current_version" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+      local current_version
+      current_version=$(echo "$current_version_line" | cut -d: -f2)
+      if [[ "$current_version" =~ ^([0-9]+)\\.([0-9]+)$ ]]; then
         major=${BASH_REMATCH[1]}
         minor=${BASH_REMATCH[2]}
-      elif [[ "$current_version" =~ ^([0-9]+)$ ]]; then # Handle case where version might be just '1'
+      elif [[ "$current_version" =~ ^([0-9]+)$ ]]; then
         major=${BASH_REMATCH[1]}
-        minor=0
-      else # Default if format is unexpected
+        minor=0 
+      else
+        echo "[determine_version] Warning: Unexpected version format '$current_version' for ID $id. Resetting to 1.0." >&2
         major=1
         minor=0
       fi
-      echo "Found existing version for ID $id: $major.$minor" >&2
+      echo "[determine_version] Found existing version for ID $id: $major.$minor" >&2
     else
-      echo "No existing version for ID $id, will start with 1.0" >&2
+      echo "[determine_version] No existing version for ID $id in $version_file. Initializing to 1.0." >&2
       major=1
       minor=0
     fi
   else
-    echo "Version file doesn't exist, creating new one at $version_file" >&2
-    touch "$version_file"
-    major=1
-    minor=0
+    echo "[determine_version] Version file '$version_file' not found. Initializing version for ID $id to 1.0." >&2
+    # major=1, minor=0 already set as defaults
+    # Create the .versions file with a header if it's the very first time
+    if ! mkdir -p "$(dirname "$version_file")"; then echo "[determine_version] Error creating directory for $version_file" >&2; return 1; fi
+    if ! echo "# Diagram ID to Version mapping" > "$version_file"; then echo "[determine_version] Error creating $version_file" >&2; return 1; fi
+    echo "[determine_version] Created $version_file with header." >&2
   fi
   
-  # Determine version based on commit message
-  if echo "$commit_msg" | grep -Eiq '(added|new)'; then
-    # For new files, always start with version 1.0
+  if echo "$commit_msg" | grep -Eiq '(added|new|initial|create)'; then
+    echo "[determine_version] Commit message suggests new file. Setting version for ID $id to 1.0." >&2
     major=1
     minor=0
-    echo "This is a new file, setting initial version to 1.0" >&2
   else
-    # For updates, increment minor version
-    minor=$((10#$minor+1)) # Ensure base-10 arithmetic for minor
-    echo "This is an update, incrementing minor version to $major.$minor" >&2
+    echo "[determine_version] Commit message suggests update. Incrementing minor version for ID $id from $major.$minor." >&2
+    minor=$((10#$minor + 1))
   fi
   
   local new_version="${major}.${minor}"
+  echo "[determine_version] Determined version for ID $id ($file): $new_version" >&2
   
-  # Update the version file
+  local temp_version_file
+  temp_version_file=$(mktemp)
+  if [[ $? -ne 0 ]] || [[ -z "$temp_version_file" ]]; then echo "[determine_version] Error creating temp file for .versions" >&2; return 1; fi
+
   if grep -q "^$id:" "$version_file"; then
-    echo "Updating existing entry for ID $id to version $new_version" >&2
-    local temp_version_file=$(mktemp)
-    sed "s/^$id:.*/$id:$new_version/" "$version_file" > "$temp_version_file"
-    mv "$temp_version_file" "$version_file"
+    echo "[determine_version] Updating existing entry in $version_file for ID $id to version $new_version" >&2
+    sed "s/^$id:.*/$id:$new_version/" "$version_file" > "$temp_version_file" && mv "$temp_version_file" "$version_file"
+    if [[ $? -ne 0 ]]; then echo "[determine_version] Error updating $version_file" >&2; rm -f "$temp_version_file"; return 1; fi
   else
-    echo "Adding new entry for ID $id with version $new_version" >&2
+    echo "[determine_version] Adding new entry to $version_file for ID $id with version $new_version" >&2
     echo "$id:$new_version" >> "$version_file"
+    if [[ $? -ne 0 ]]; then echo "[determine_version] Error adding to $version_file" >&2; rm -f "$temp_version_file"; return 1; fi
+    # Temp file not used in this path, but ensure it's cleaned up if mktemp was called
+    rm -f "$temp_version_file" 
   fi
   
-  echo "$new_version" # This is the actual return value and should go to stdout
+  echo "$new_version" 
+  return 0 
 }
 
 # Function to update changelog
 update_changelog() {
-  local file="$1" # .drawio file path
-  local basename=$(basename "$file")
+  local file="$1" 
+  echo "[update_changelog] Called for file: $file" >&2
+  echo "[update_changelog] TRIGGERING_SHA: $TRIGGERING_SHA" >&2
+  local basename
+  basename=$(basename "$file")
   local filename_without_ext="${basename%.drawio}"
   
-  # Get commit info from the TRIGGERING_SHA for the changelog entry
   local commit_hash_to_log=""
   local commit_msg_to_log=""
   local author_name_to_log=""
 
   if [[ -n "$TRIGGERING_SHA" ]]; then
     commit_hash_to_log=$(git log -1 --format="%h" "$TRIGGERING_SHA")
-    # Fetch only the subject line of the commit message
     commit_msg_to_log=$(git log -1 --format="%s" "$TRIGGERING_SHA")
     author_name_to_log=$(git log -1 --format="%an" "$TRIGGERING_SHA")
+    echo "[update_changelog] Using TRIGGERING_SHA ($TRIGGERING_SHA): hash=$commit_hash_to_log, author=$author_name_to_log, msg=$commit_msg_to_log" >&2
   else
-    # Fallback if GITHUB_SHA was somehow not available (should not happen in Actions)
-    echo "Warning: GITHUB_SHA (TRIGGERING_SHA) not found. Falling back to per-file commit info for changelog entry related to $file." >&2
+    echo "[update_changelog] Warning: TRIGGERING_SHA not found. Falling back to per-file commit info for $file." >&2
     commit_hash_to_log=$(git log -1 --format="%h" -- "$file")
     commit_msg_to_log=$(git log -1 --format="%s" -- "$file")
     author_name_to_log=$(git log -1 --format="%an" -- "$file")
   fi
   
-  # Get current date and time
-  local current_date=$(date +"%d.%m.%Y")
-  local current_time=$(date +"%H:%M:%S")
+  local current_date
+  current_date=$(date +"%d.%m.%Y")
+  local current_time
+  current_time=$(date +"%H:%M:%S")
   
-  # Determine version (this logic is per-file and uses its own commit history)
-  local version=$(determine_version "$file")
+  echo "[update_changelog] Attempting to determine version for $file..." >&2
+  local version_output
+  version_output=$(determine_version "$file")
+  local determine_version_exit_code=$?
+
+  if [[ $determine_version_exit_code -ne 0 ]] || [[ -z "$version_output" ]]; then
+      echo "[update_changelog] Error: determine_version failed for $file or returned empty. Exit code: $determine_version_exit_code. Skipping changelog update for this file." >&2
+      return 1
+  fi
+  local version="$version_output"
+  echo "[update_changelog] Version determined for $file: $version" >&2
   
-  # Escape the commit message for CSV: replace " with ""
-  local commit_msg_to_log_escaped=$(echo "$commit_msg_to_log" | sed 's/"/""/g')
+  local commit_msg_to_log_escaped
+  commit_msg_to_log_escaped=$(echo "$commit_msg_to_log" | sed 's/"/""/g')
   
-  # Create changelog entry
-  local entry="$current_date,$current_time,\\"$filename_without_ext\\",\\"$file\\",\\"Converted to PNG\\",\\"$commit_msg_to_log_escaped\\",$version,$commit_hash_to_log,\\"$author_name_to_log\\""
-  
-  # Create lock file for atomic updates
+  local entry="$current_date,$current_time,\\\"$filename_without_ext\\\",\\\"$file\\\",\\\"Converted to PNG\\\",\\\"$commit_msg_to_log_escaped\\\",$version,$commit_hash_to_log,\\\"$author_name_to_log\\\""
+  echo "[update_changelog] Changelog entry to be added: $entry" >&2
+  echo "[update_changelog] Target changelog file: $CHANGELOG_FILE" >&2
+
   local lock_file="${CHANGELOG_FILE}.lock"
-  
-  # Try to acquire lock - only continue if we can create the lock file
+  echo "[update_changelog] Attempting to acquire lock: $lock_file" >&2
   if ! mkdir "$lock_file" 2>/dev/null; then
-    echo "Another process is updating the changelog. Waiting for lock..."
+    echo "[update_changelog] Lock exists. Waiting..." >&2
     local max_wait=30
     local wait_count=0
-    
-    # Wait for the lock to be released
     while [ $wait_count -lt $max_wait ] && ! mkdir "$lock_file" 2>/dev/null; do
       sleep 1
       wait_count=$((wait_count + 1))
-      echo "Waiting for lock... ($wait_count/$max_wait)"
+      echo "[update_changelog] Waiting for lock... ($wait_count/$max_wait)" >&2
     done
     
-    # If we still can't get the lock after waiting, try to force it
-    if ! mkdir "$lock_file" 2>/dev/null; then
-      echo "Warning: Lock file exists for too long. Checking if process is still active..."
-      
-      # If the lock is more than 5 minutes old, assume it's stale and force it
-      if [ -d "$lock_file" ] && [ $(($(date +%s) - $(stat -c %Y "$lock_file"))) -gt 300 ]; then
-        echo "Lock appears to be stale. Removing and continuing."
+    if ! mkdir "$lock_file" 2>/dev/null; then 
+      if [ -d "$lock_file" ] && [ "$(( $(date +%s) - $(stat -c %Y "$lock_file") ))" -gt 300 ]; then
+        echo "[update_changelog] Stale lock detected (older than 5 minutes). Removing and acquiring." >&2
         rm -rf "$lock_file"
-        mkdir "$lock_file"
+        if ! mkdir "$lock_file"; then
+           echo "[update_changelog] Error: Failed to acquire lock even after removing stale one for $file." >&2
+           return 1
+        fi
       else
-        echo "Error: Cannot acquire changelog lock. Skipping changelog update."
+        echo "[update_changelog] Error: Cannot acquire changelog lock for $file after waiting. Skipping changelog update." >&2
         return 1
       fi
     fi
   fi
+  echo "[update_changelog] Lock acquired: $lock_file" >&2
   
-  # We now have the lock
-  trap 'rm -rf "$lock_file"' EXIT
-  
-  # Make sure changelog file exists
+  # Set trap with logging
+  trap 'echo "[update_changelog] EXIT trap removing lock: $lock_file for $file" >&2; rm -rf "$lock_file"' EXIT
+
   if [[ ! -f "$CHANGELOG_FILE" ]]; then
-    echo "Creating new changelog file: $CHANGELOG_FILE"
-    mkdir -p "$(dirname "$CHANGELOG_FILE")"
-    echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
+    echo "[update_changelog] Changelog file does not exist. Creating with header: $CHANGELOG_FILE" >&2
+    if ! mkdir -p "$(dirname "$CHANGELOG_FILE")"; then
+        echo "[update_changelog] Error: Failed to create directory for $CHANGELOG_FILE." >&2
+        rm -rf "$lock_file"; trap - EXIT; return 1;
+    fi
+    if ! echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"; then
+        echo "[update_changelog] Error: Failed to create or write header to $CHANGELOG_FILE." >&2
+        rm -rf "$lock_file"; trap - EXIT; return 1;
+    fi
   fi
   
-  # Atomic update of the changelog file to prevent conflicts
-  local temp_file=$(mktemp)
-  cat "$CHANGELOG_FILE" > "$temp_file"
-  echo "$entry" >> "$temp_file"
-  mv "$temp_file" "$CHANGELOG_FILE"
+  local temp_changelog_file
+  temp_changelog_file=$(mktemp)
+  if [[ $? -ne 0 ]] || [[ -z "$temp_changelog_file" ]]; then
+      echo "[update_changelog] Error: Failed to create temp file for changelog update." >&2
+      rm -rf "$lock_file"; trap - EXIT; return 1;
+  fi
+  echo "[update_changelog] Created temp file for changelog: $temp_changelog_file" >&2
+
+  cat "$CHANGELOG_FILE" > "$temp_changelog_file"
+  echo "$entry" >> "$temp_changelog_file"
   
-  echo "Added entry to changelog for $basename (version $version)"
+  echo "[update_changelog] Moving $temp_changelog_file to $CHANGELOG_FILE" >&2
+  if ! mv "$temp_changelog_file" "$CHANGELOG_FILE"; then
+      echo "[update_changelog] Error: Failed to move temp file to $CHANGELOG_FILE. Original temp file: $temp_changelog_file (not deleted)." >&2
+      rm -rf "$lock_file"; trap - EXIT; return 1;
+  fi
   
-  # Touch the changelog file to update its timestamp
-  touch "$CHANGELOG_FILE"
+  echo "[update_changelog] Successfully added entry to changelog for $basename (version $version)" >&2
   
-  # Release the lock
   rm -rf "$lock_file"
-  trap - EXIT
+  trap - EXIT # Clear the trap for this specific execution
+  echo "[update_changelog] Lock released, trap cleared for $file." >&2
+  return 0
 }
 
 # Function to generate GitHub step summary
@@ -462,61 +497,139 @@ generate_github_step_summary() {
 
 # Main flow
 main() {
-  detect_changed_files
+  echo "[main] Starting script execution." >&2
+  detect_changed_files # This function should set CHANGED_FILES env var or script var
   
-  # Prepare to process files
-  
-  # Check if CHANGED_FILES is empty
-  if [[ -z "$CHANGED_FILES" ]]; then
-    echo "ERROR: No files to process. CHANGED_FILES is empty."
+  if [[ -z "$CHANGED_FILES" ]]; then # Check env var set by workflow or by script's detect_changed_files
+    echo "[main] No files to process (CHANGED_FILES is empty). Exiting." >&2
     exit 0
   fi
+  echo "[main] Files to process based on CHANGED_FILES env var: $CHANGED_FILES" >&2
   
-  # Initialize a counter for processed files
   local processed_count=0
-  
-  for file in $CHANGED_FILES; do
-    echo "Processing file: '$file'"
+  local overall_success=true 
+
+  # IFS is set to space, tab, newline by default.
+  # If CHANGED_FILES can contain spaces in filenames (it shouldn't with current logic), this loop needs care.
+  # Assuming CHANGED_FILES is a space-separated list of paths without spaces in them.
+  for file_to_process_loopvar in $CHANGED_FILES; do
+    echo "[main] Processing file from list: '$file_to_process_loopvar'" >&2
     
-    if [[ ! -f "$file" ]]; then
-      echo "Warning: File $file does not exist, skipping."
+    if [[ ! -f "$file_to_process_loopvar" ]]; then
+      echo "[main] Warning: File $file_to_process_loopvar from CHANGED_FILES list does not exist, skipping." >&2
       continue
     fi
     
-    local processed_file="$file"
+    local processed_file_path="$file_to_process_loopvar" # Start with the original path
     
-    # Assign ID if needed
-    assign_ids "$file"
-    if [[ -n "$PROCESSED_FILE" ]]; then
-      processed_file="$PROCESSED_FILE"
-      echo "File was renamed to: $processed_file"
+    # Assign ID if needed. assign_ids might rename the file and update PROCESSED_FILE env var.
+    # The assign_ids function needs to reliably return the new path if renamed, or the original if not.
+    # For now, let's assume assign_ids correctly handles $file_to_process_loopvar and
+    # if it renames, the new name is what we need for conversion and changelog.
+    # A better way: assign_ids could echo the new path to stdout.
+    
+    local path_after_assign_ids
+    path_after_assign_ids=$(assign_ids "$file_to_process_loopvar") # Assuming assign_ids is modified to echo new path
+    local assign_ids_exit_code=$?
+
+    if [[ $assign_ids_exit_code -ne 0 ]]; then
+        echo "[main] Error in assign_ids for $file_to_process_loopvar. Skipping." >&2
+        overall_success=false
+        continue
+    fi
+    # If assign_ids didn't rename, it should echo the original path.
+    # If it did rename, it echoes the new path.
+    processed_file_path="$path_after_assign_ids"
+    echo "[main] File path after assign_ids: $processed_file_path" >&2
+
+
+    if ! convert_to_png "$processed_file_path"; then
+      echo "[main] Error: Failed to convert $processed_file_path to PNG, continuing with next file." >&2
+      overall_success=false
+      continue # Skip changelog for failed conversion
     fi
     
-    # Convert to PNG
-    if ! convert_to_png "$processed_file"; then
-      echo "Error: Failed to convert $processed_file to PNG, continuing with next file."
-      continue
+    echo "[main] Attempting to update changelog for $processed_file_path..." >&2
+    if update_changelog "$processed_file_path"; then
+      echo "[main] Changelog updated successfully for $processed_file_path." >&2
+    else
+      echo "[main] Failed to update changelog for $processed_file_path. See errors above." >&2
+      overall_success=false 
     fi
     
-    # Update changelog
-    update_changelog "$processed_file"
-    
-    # Increment counter
-    processed_count=$((processed_count+1))
+    processed_count=$((processed_count + 1))
   done
   
-  echo "Finished processing $processed_count files."
+  echo "[main] Finished processing $processed_count files." >&2
   
-  # Force create an empty changelog if none processed
   if [[ $processed_count -eq 0 && ! -f "$CHANGELOG_FILE" ]]; then
-    echo "Creating empty changelog as no files were processed."
-    mkdir -p "$(dirname "$CHANGELOG_FILE")"
-    echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
+    echo "[main] Creating empty changelog as no files were processed and it doesn't exist." >&2
+    if ! mkdir -p "$(dirname "$CHANGELOG_FILE")"; then echo "[main] Error creating dir for empty changelog" >&2; fi
+    if ! echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"; then echo "[main] Error creating empty changelog file" >&2; fi
   fi
   
-  # Generate GitHub step summary
   generate_github_step_summary "$processed_count"
+
+  if [[ "$overall_success" = false ]]; then
+    echo "[main] One or more operations failed during processing. Please check logs." >&2
+    # exit 1 # Optionally exit with error
+  fi
+  echo "[main] Script execution finished." >&2
 }
 
-# Run main function
-main
+# Modify assign_ids to output the new (or original) file path to stdout
+assign_ids() {
+  local file_param="$1" # Use a different name to avoid confusion with global 'file'
+  local current_file_path="$file_param" # Track the path, may change if renamed
+  local basename
+  basename=$(basename "$current_file_path")
+  echo "[assign_ids] Called for file: $current_file_path (basename: $basename)" >&2
+
+  if [[ "$basename" =~ \\([0-9]{3}\\)\\.drawio$ ]] || [[ "$basename" =~ ^[0-9]+\\.drawio$ ]]; then
+    echo "[assign_ids] File $basename already has an ID or is numeric. No renaming needed." >&2
+    echo "$current_file_path" # Output original path
+    return 0
+  fi
+  
+  if [[ ! -f "$COUNTER_FILE" ]]; then
+    echo "[assign_ids] Counter file $COUNTER_FILE not found. Creating with 000." >&2
+    if ! mkdir -p "$(dirname "$COUNTER_FILE")"; then echo "[assign_ids] Error creating dir for $COUNTER_FILE" >&2; echo "$current_file_path"; return 1; fi
+    if ! echo "000" > "$COUNTER_FILE"; then echo "[assign_ids] Error creating $COUNTER_FILE" >&2; echo "$current_file_path"; return 1; fi
+  fi
+  
+  local counter
+  counter=$(<"$COUNTER_FILE")
+  local new_counter_val
+  new_counter_val=$((10#$counter + 1))
+  local new_counter_str
+  new_counter_str=$(printf "%03d" $new_counter_val)
+  
+  local filename_without_ext="${basename%.drawio}"
+  local new_filename="${filename_without_ext} (${new_counter_str}).drawio"
+  # Ensure DRAWIO_FILES_DIR is used for the new path
+  local new_filepath="${DRAWIO_FILES_DIR}/${new_filename}"
+  
+  echo "[assign_ids] Attempting to rename $current_file_path to $new_filepath" >&2
+  if ! mv "$current_file_path" "$new_filepath"; then
+    echo "[assign_ids] Error: Failed to rename $current_file_path to $new_filepath." >&2
+    echo "$current_file_path" # Output original path on failure
+    return 1
+  fi
+  
+  if ! echo "$new_counter_str" > "$COUNTER_FILE"; then
+    echo "[assign_ids] Error: Failed to update counter file $COUNTER_FILE." >&2
+    # File was renamed, but counter not updated. This is problematic.
+    # Consider reverting rename or other error handling. For now, log and continue with new path.
+    echo "$new_filepath" # Output new path despite counter error
+    return 1 # Signal error due to counter update failure
+  fi
+  
+  echo "[assign_ids] Assigned ID $new_counter_str to $basename -> $new_filename. New path: $new_filepath" >&2
+  echo "$new_filepath" # Output new path
+  return 0
+}
+
+# Ensure all echos intended for GITHUB_ENV or GITHUB_OUTPUT in other functions are correct.
+# For example, in convert_to_png, if it sets outputs, ensure it's using $GITHUB_OUTPUT.
+
+main "$@"
