@@ -297,7 +297,7 @@ jobs:
       - name: Create Diagrams folder in SharePoint if needed
         if: vars.DIAGRAMS_SHAREPOINT_CLIENT_ID != '' && vars.DIAGRAMS_SHAREPOINT_TENANT_ID != ''
         run: |
-          echo "📁 Checking if Documents/Diagrams folder exists in SharePoint..."
+          echo "📁 Checking if Shared Documents/Diagrams folder exists in SharePoint..."
           
           # Auth to Microsoft Graph
           echo "Getting access token..."
@@ -319,8 +319,8 @@ jobs:
             echo "Drive ID was set to 'auto'; using base drive ID for this step: ${DRIVE_ID_TO_USE}"
           fi
           
-          # Check if Diagrams folder exists
-          FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Documents/Diagrams"
+          # Check if Diagrams folder exists in Shared Documents (correct path)
+          FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Shared Documents/Diagrams"
           FOLDER_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X GET "$FOLDER_CHECK_URL" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Accept: application/json")
@@ -328,8 +328,8 @@ jobs:
           if [[ "$FOLDER_RESPONSE" == *"error"* && "$FOLDER_RESPONSE" == *"itemNotFound"* ]]; then
             echo "📁 Diagrams folder does not exist. Creating it..."
             
-            # Create Diagrams folder
-            CREATE_FOLDER_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Documents:/children"
+            # Create Diagrams folder in Shared Documents (correct path)
+            CREATE_FOLDER_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Shared Documents:/children"
             CREATE_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X POST "$CREATE_FOLDER_URL" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \

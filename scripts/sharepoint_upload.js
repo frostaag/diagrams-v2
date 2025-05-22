@@ -98,25 +98,25 @@ async function uploadToSharePoint() {
     // Try different upload paths to find one that works
     let uploadResult = null;
     
-    // Try 1: Standard Documents path
+    // Try 1: Direct to Shared Documents path (preferred approach)
     try {
-      console.log('Trying path format 1: Documents');
-      const uploadPath = `/v1.0/sites/${siteId}/drives/${driveId}/root:/Documents/${folderPath}/${fileName}:/content`;
+      console.log('Trying path format 1: Shared Documents/folderPath');
+      const uploadPath = `/v1.0/sites/${siteId}/drives/${driveId}/root:/Shared%20Documents/${folderPath}/${fileName}:/content`;
       uploadResult = await uploadFile(uploadPath, tokenData.access_token, fileContent);
     } catch (error) {
       console.log(`Path format 1 failed: ${error.message}`);
       
-      // Try 2: Shared Documents path
+      // Try 2: Legacy Documents path
       try {
-        console.log('Trying path format 2: Shared Documents');
-        const uploadPath = `/v1.0/sites/${siteId}/drives/${driveId}/root:/Shared%20Documents/${folderPath}/${fileName}:/content`;
+        console.log('Trying path format 2: Documents/folderPath');
+        const uploadPath = `/v1.0/sites/${siteId}/drives/${driveId}/root:/Documents/${folderPath}/${fileName}:/content`;
         uploadResult = await uploadFile(uploadPath, tokenData.access_token, fileContent);
       } catch (error2) {
         console.log(`Path format 2 failed: ${error2.message}`);
         
         // Try 3: Root path direct
         try {
-          console.log('Trying path format 3: Direct in root');
+          console.log('Trying path format 3: Root/folderPath');
           const uploadPath = `/v1.0/sites/${siteId}/drives/${driveId}/root:/${folderPath}/${fileName}:/content`;
           uploadResult = await uploadFile(uploadPath, tokenData.access_token, fileContent);
         } catch (error3) {

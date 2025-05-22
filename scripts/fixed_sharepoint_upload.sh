@@ -162,8 +162,8 @@ upload_to_sharepoint() {
   
   # Use direct drive ID from testing results
   echo "📁 Using fixed Documents library ID: $SHAREPOINT_DRIVE_ID"
-  # Correct path format for Documents/Diagrams folder
-  local upload_path="${site_url}/drives/${SHAREPOINT_DRIVE_ID}/root:/Documents/${destination}/${OUTPUT_FILENAME}:/content"
+  # Correct path format for Shared Documents/Diagrams folder (fix path issue)
+  local upload_path="${site_url}/drives/${SHAREPOINT_DRIVE_ID}/root:/Shared Documents/${destination}:/content"
   echo "Final upload path: $upload_path"
   
   # Upload the file
@@ -187,8 +187,8 @@ upload_to_sharepoint() {
     # Try alternate paths
     echo "🔄 Trying alternate upload paths..."
     
-    # Try path with Documents folder but no subfolder
-    local alt_path="${site_url}/drives/${SHAREPOINT_DRIVE_ID}/root:/Documents/${OUTPUT_FILENAME}:/content"
+    # Try path with Shared Documents folder directly
+    local alt_path="${site_url}/drives/${SHAREPOINT_DRIVE_ID}/root:/Shared Documents/${OUTPUT_FILENAME}:/content"
     echo "Trying path: $alt_path"
     
     local alt_response=$(curl $curl_opts -X PUT \
