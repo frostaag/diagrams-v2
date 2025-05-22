@@ -109,6 +109,7 @@ jobs:
             CHANGED_FILES=""
           fi
           echo "Files to process: [$CHANGED_FILES]"
+          # Export to environment for the script
           echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
           
           bash ./scripts/process_drawio_files.sh
@@ -141,18 +142,64 @@ jobs:
           DIAGRAMS_COUNTER_FILE: ${{ env.DIAGRAMS_COUNTER_FILE }}
           DIAGRAMS_CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
 
+      - name: Verify Changelog After Script
+        shell: bash
+        run: |
+          echo "--- Verifying png_files directory (current dir: $(pwd)) ---"
+          ls -la png_files/
+          echo "--- Verifying CHANGELOG.csv content (path from env: ${{ env.DIAGRAMS_CHANGELOG_FILE }}) ---"
+          if [ -f "${{ env.DIAGRAMS_CHANGELOG_FILE }}" ]; then
+            echo "CHANGELOG.csv exists. Content:"
+            cat "${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+          else
+            echo "CHANGELOG.csv does NOT exist at ${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+          fi
+          echo "--- Verification complete ---"
+
       - name: Commit changes
         run: |
+          echo "--- Preparing to commit changes (current dir: $(pwd)) ---"
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add png_files/ drawio_files/ "${{ env.DIAGRAMS_CHANGELOG_FILE }}" "${{ env.DIAGRAMS_COUNTER_FILE }}"
+          
+          echo "--- Git status before add: ---"
+          git status -s
+          
+          echo "--- Adding files: ---"
+          echo "Adding png_files/"
+          git add png_files/
+          echo "Adding drawio_files/"
+          git add drawio_files/
+          echo "Adding specific changelog file: ${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+          git add "${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+          echo "Adding specific counter file: ${{ env.DIAGRAMS_COUNTER_FILE }}"
+          git add "${{ env.DIAGRAMS_COUNTER_FILE }}"
+          
+          echo "--- Git status after add: ---"
+          git status -s
+          
+          echo "--- Staged diff for CHANGELOG.csv (${{ env.DIAGRAMS_CHANGELOG_FILE }}): ---"
+          git diff --staged "${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+          echo "--- End of staged diff for CHANGELOG.csv ---"
+
+          echo "--- Full staged diff: ---"
+          git diff --staged
+          echo "--- End of full staged diff ---"
+          
           if ! git diff --staged --quiet; then
+            echo "Changes detected by 'git diff --staged --quiet'. Proceeding with commit."
             git commit -m "Update diagram files and changelog [skip ci]"
+            echo "--- Pulling latest changes before pushing ---"
+            # Ensure GITHUB_TOKEN has write permissions to the repository
             git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-            git push || echo "::warning::Failed to push changes."
+            # Pull with rebase to incorporate any changes made to the repository since checkout
+            git pull --rebase origin $(git rev-parse --abbrev-ref HEAD) || echo "::warning::Failed to pull latest changes. May cause push conflicts."
+            echo "--- Pushing changes --- (remote: $(git remote get-url origin))"
+            git push || echo "::warning::Failed to push changes. Check GITHUB_TOKEN permissions and branch protection rules."
           else
-            echo "No changes to commit"
+            echo "No changes to commit according to 'git diff --staged --quiet'."
           fi
+          echo "--- Commit changes step complete ---"
 
       # SharePoint Steps (simplified for brevity, ensure they set outputs)
       - name: Test SharePoint Connectivity
