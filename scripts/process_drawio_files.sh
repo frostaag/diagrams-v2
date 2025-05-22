@@ -240,13 +240,13 @@ determine_version() {
   local id=$(extract_id "$file")
   
   if [[ -z "$id" ]]; then
-    echo "Error: Could not extract ID from $file"
+    echo "Error: Could not extract ID from $file" >&2
     return 1
   fi
   
   # Get the commit message
   local commit_msg=$(git log -1 --format="%s" -- "$file")
-  echo "Commit message for $file: '$commit_msg'"
+  echo "Commit message for $file: '$commit_msg'" >&2
   
   # Check if file exists in version tracking file
   local version_file="$PNG_FILES_DIR/.versions"
@@ -254,17 +254,17 @@ determine_version() {
   local minor=0
   
   if [[ -f "$version_file" ]]; then
-    echo "Version file exists at $version_file"
+    echo "Version file exists at $version_file" >&2
     local current_version=$(grep "^$id:" "$version_file" | cut -d: -f2)
     if [[ -n "$current_version" ]]; then
       major=$(echo "$current_version" | cut -d. -f1)
       minor=$(echo "$current_version" | cut -d. -f2)
-      echo "Found existing version for ID $id: $current_version"
+      echo "Found existing version for ID $id: $current_version" >&2
     else
-      echo "No existing version for ID $id, will start with 1.0"
+      echo "No existing version for ID $id, will start with 1.0" >&2
     fi
   else
-    echo "Version file doesn't exist, creating new one at $version_file"
+    echo "Version file doesn't exist, creating new one at $version_file" >&2
     touch "$version_file"
   fi
   
@@ -273,29 +273,29 @@ determine_version() {
     # For new files, always start with version 1.0
     major=1
     minor=0
-    echo "This is a new file, setting initial version to 1.0"
+    echo "This is a new file, setting initial version to 1.0" >&2
   else
     # For updates, increment minor version
     minor=$((minor+1))
-    echo "This is an update, incrementing minor version to $major.$minor"
+    echo "This is an update, incrementing minor version to $major.$minor" >&2
   fi
   
   local new_version="${major}.${minor}"
   
   # Update the version file
   if grep -q "^$id:" "$version_file"; then
-    echo "Updating existing entry for ID $id to version $new_version"
+    echo "Updating existing entry for ID $id to version $new_version" >&2
     # Use platform-independent way to update the version file
     # Create a temporary file for sed output
     local temp_version_file=$(mktemp)
     sed "s/^$id:.*/$id:$new_version/" "$version_file" > "$temp_version_file"
     mv "$temp_version_file" "$version_file"
   else
-    echo "Adding new entry for ID $id with version $new_version"
+    echo "Adding new entry for ID $id with version $new_version" >&2
     echo "$id:$new_version" >> "$version_file"
   fi
   
-  echo "$new_version"
+  echo "$new_version" # This is the actual return value and should go to stdout
 }
 
 # Function to update changelog
