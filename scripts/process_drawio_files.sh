@@ -371,6 +371,28 @@ update_changelog() {
   
   local entry="$current_date,$current_time,\\\"$filename_without_ext\\\",\\\"$file\\\",\\\"Converted to PNG\\\",\\\"$commit_msg_to_log_escaped\\\",$version,$commit_hash_to_log,\\\"$author_name_to_log\\\""
   echo "[update_changelog] Changelog entry to be added: $entry" >&2
+  
+  # Ensure the directory exists
+  local changelog_dir
+  changelog_dir=$(dirname "$CHANGELOG_FILE")
+  echo "[update_changelog] Ensuring changelog directory exists: $changelog_dir" >&2
+  mkdir -p "$changelog_dir" || { echo "[update_changelog] Failed to create directory for changelog: $changelog_dir" >&2; return 1; }
+
+  # Check if changelog file exists and is readable
+  if [[ ! -f "$CHANGELOG_FILE" || ! -r "$CHANGELOG_FILE" ]]; then
+    echo "[update_changelog] Changelog file does not exist or is not readable at: $CHANGELOG_FILE. Creating new file." >&2
+    echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE" || { 
+      echo "[update_changelog] Failed to create new changelog file: $CHANGELOG_FILE" >&2
+      return 1
+    }
+    echo "[update_changelog] Created new changelog file with header." >&2
+  else
+    echo "[update_changelog] Existing changelog file found at: $CHANGELOG_FILE" >&2
+    # Show the first few lines of the existing changelog
+    echo "[update_changelog] First few lines of existing changelog:" >&2
+    head -n 3 "$CHANGELOG_FILE" >&2
+  fi
+
   echo "[update_changelog] Target changelog file: $CHANGELOG_FILE" >&2
 
   local lock_file="${CHANGELOG_FILE}.lock"
@@ -404,18 +426,6 @@ update_changelog() {
   # Set trap with logging
   trap 'echo "[update_changelog] EXIT trap removing lock: $lock_file for $file" >&2; rm -rf "$lock_file"' EXIT
 
-  if [[ ! -f "$CHANGELOG_FILE" ]]; then
-    echo "[update_changelog] Changelog file does not exist. Creating with header: $CHANGELOG_FILE" >&2
-    if ! mkdir -p "$(dirname "$CHANGELOG_FILE")"; then
-        echo "[update_changelog] Error: Failed to create directory for $CHANGELOG_FILE." >&2
-        rm -rf "$lock_file"; trap - EXIT; return 1;
-    fi
-    if ! echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"; then
-        echo "[update_changelog] Error: Failed to create or write header to $CHANGELOG_FILE." >&2
-        rm -rf "$lock_file"; trap - EXIT; return 1;
-    fi
-  fi
-  
   local temp_changelog_file
   temp_changelog_file=$(mktemp)
   if [[ $? -ne 0 ]] || [[ -z "$temp_changelog_file" ]]; then
@@ -433,11 +443,34 @@ update_changelog() {
       rm -rf "$lock_file"; trap - EXIT; return 1;
   fi
   
+  # Make sure changelog is readable and not empty
+  if [[ ! -r "$CHANGELOG_FILE" ]]; then
+    echo "[update_changelog] ERROR: Changelog file not readable after update: $CHANGELOG_FILE" >&2
+    rm -rf "$lock_file"; trap - EXIT; return 1;
+  fi
+  
+  local line_count
+  line_count=$(wc -l < "$CHANGELOG_FILE" || echo "ERROR")
+  if [[ "$line_count" == "ERROR" ]]; then
+    echo "[update_changelog] ERROR: Could not count lines in changelog file" >&2
+  else
+    echo "[update_changelog] Changelog now contains $line_count lines" >&2
+    if [[ "$line_count" -lt 2 ]]; then
+      echo "[update_changelog] WARNING: Changelog seems suspiciously short with only $line_count lines" >&2
+    fi
+  fi
+  
   echo "[update_changelog] Successfully added entry to changelog for $basename (version $version)" >&2
   
   rm -rf "$lock_file"
   trap - EXIT # Clear the trap for this specific execution
   echo "[update_changelog] Lock released, trap cleared for $file." >&2
+  
+  # Dump the entire changelog file to help with debugging
+  echo "[update_changelog] Full changelog content:" >&2
+  cat "$CHANGELOG_FILE" >&2
+  echo "[update_changelog] End of changelog content" >&2
+  
   return 0
 }
 

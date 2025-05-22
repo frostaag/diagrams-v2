@@ -162,27 +162,52 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          echo "--- Git status before add: ---"
-          git status -s
+          # Configure Git to detect content changes regardless of timestamps
+          git config --local core.ignoreStat true
+          git config --local core.trustctime false
           
-          echo "--- Adding files: ---"
-          git add png_files/ drawio_files/ "${{ env.DIAGRAMS_CHANGELOG_FILE }}" "${{ env.DIAGRAMS_COUNTER_FILE }}"
+          echo "--- Git status before add: ---"
+          git status
+          
+          # Explicitly check and add the CHANGELOG.csv file
+          CHANGELOG_PATH="${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+          echo "--- CHANGELOG.csv check: ---"
+          if [ -f "$CHANGELOG_PATH" ]; then
+            echo "CHANGELOG.csv exists at $CHANGELOG_PATH. Content:"
+            head -n 3 "$CHANGELOG_PATH"
+            echo "[...more lines may follow...]"
+            
+            # Add with absolute path
+            echo "Adding $CHANGELOG_PATH explicitly"
+            git add -f "$CHANGELOG_PATH"
+          else
+            echo "ERROR: CHANGELOG.csv not found at $CHANGELOG_PATH"
+          fi
+          
+          # Also add other important files and directories
+          echo "Adding png_files/ directory"
+          git add -f png_files/
+          echo "Adding drawio_files/ directory"
+          git add -f drawio_files/
+          echo "Adding counter file"
+          git add -f "${{ env.DIAGRAMS_COUNTER_FILE }}" || echo "Counter file not found"
           
           echo "--- Git status after add: ---"
-          git status -s
+          git status
           
-          # Use git status to check for changes
+          # Modified files detection based on git status
           if git status -s | grep -q .; then
-            echo "Changes detected. Proceeding with commit."
-            git commit -m "Update diagram files and changelog [skip ci]"
+            echo "Changes detected by 'git status -s'. Proceeding with commit."
+            git commit -m "Update diagram files and changelog [skip ci]" || echo "::warning::No changes to commit or commit failed."
             
-            # Pull latest changes with rebase
+            # Pull latest changes with rebase (if needed)
+            echo "--- Pulling latest changes before pushing ---"
             git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-            git pull --rebase origin $(git rev-parse --abbrev-ref HEAD) || echo "::warning::Failed to pull latest changes."
+            git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" || echo "::warning::Pull failed, continuing anyway."
             
-            # Push changes
+            # Force push to ensure changes make it to the repository
             echo "--- Pushing changes --- (remote: $(git remote get-url origin))"
-            git push || echo "::warning::Failed to push changes. Check GITHUB_TOKEN permissions and branch protection rules."
+            git push --force || echo "::warning::Failed to push changes even with force."
           else
             echo "No changes detected to commit."
           fi
@@ -355,5 +380,14 @@ jobs:
           if [ "$JOB_STATUS" = "success" ]; then
             ./scripts/success_notification.sh "$DIAGRAMS_TEAMS_WEBHOOK_URL" "$GITHUB_REPOSITORY_NAME" "$COMMIT_SHA_SHORT" "$WORKFLOW_NAME" "$GITHUB_RUN_ID"
           else
-            ./scripts/failure_notification.sh "$DIAGRAMS_TEAMS_WEBHOOK_URL" "$GITHUB_REPOSITORY_NAME" "$COMMIT_SHA_SHORT" "$WORKFLOW_NAME" "$GITHUB_RUN_ID"
+            # Capture error information from recent logs for the failure notification
+            ERROR_SNIPPET=""
+            if [ -f "$GITHUB_STEP_SUMMARY" ]; then
+              ERROR_SNIPPET=$(tail -n 20 $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Could not read step summary")
+            else
+              ERROR_SNIPPET="No detailed error information available. Check the workflow logs."
+            fi
+            
+            # Pass the error information to the failure notification script
+            ./scripts/failure_notification.sh "$DIAGRAMS_TEAMS_WEBHOOK_URL" "$GITHUB_REPOSITORY_NAME" "$COMMIT_SHA_SHORT" "$WORKFLOW_NAME" "$GITHUB_RUN_ID" "$ERROR_SNIPPET"
           fi

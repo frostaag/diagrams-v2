@@ -18,6 +18,27 @@ fi
 # Extract processed files from git
 PROCESSED_FILES=$(git diff --name-only HEAD~1 HEAD -- 'png_files/*.png' | sed 's|png_files/||g' | sed 's|.png$||g')
 
+# Extract user's display name from git config or use environment variable
+# Prioritize the AUTHOR_NAME passed from the workflow (which is from git log '%an' - full name)
+DISPLAY_NAME="${AUTHOR_NAME}" 
+
+# If empty, try to extract from commit
+if [[ -z "$DISPLAY_NAME" ]]; then
+    DISPLAY_NAME=$(git log -1 --format="%an") # author name, full name not username
+fi
+
+# If still empty, fall back to GitHub actor with pretty formatting
+if [[ -z "$DISPLAY_NAME" ]]; then
+    # Try to format the GitHub actor to look more like a name if possible
+    if [[ -n "$GITHUB_ACTOR" ]]; then
+        # Convert username like "john-doe" to "John Doe"
+        FORMATTED_NAME=$(echo "$GITHUB_ACTOR" | sed 's/-/ /g' | sed 's/_/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)} 1')
+        DISPLAY_NAME="$FORMATTED_NAME"
+    else
+        DISPLAY_NAME="System"
+    fi
+fi
+
 # Create success message in the requested format
 # The main title is now handled by the send_teams_notification.sh script's title parameter
 MESSAGE="**Repository**<br>"
@@ -27,7 +48,7 @@ MESSAGE+="${GITHUB_WORKFLOW}<br><br>"
 MESSAGE+="**Commit**<br>"
 MESSAGE+="${GITHUB_SHA}<br><br>"
 MESSAGE+="**Triggered by**<br>"
-MESSAGE+="${AUTHOR_NAME:-${GITHUB_ACTOR:-System}}<br><br>"
+MESSAGE+="${DISPLAY_NAME}<br><br>"
 MESSAGE+="**Run ID**<br>"
 MESSAGE+="${GITHUB_RUN_ID}<br><br>"
 
