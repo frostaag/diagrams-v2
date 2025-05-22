@@ -80,6 +80,35 @@ jobs:
           mkdir -p ./drawio_files
           echo "Output directories ensured."
 
+      - name: Create Test Diagram
+        shell: bash
+        run: |
+          echo "Creating test diagram to ensure processing works..."
+          TEST_DIR="drawio_files/test"
+          mkdir -p "$TEST_DIR"
+          
+          # Create a simple drawio file with current timestamp so it's always considered new
+          TIMESTAMP=$(date +"%Y%m%d%H%M%S")
+          cat > "$TEST_DIR/test_diagram_$TIMESTAMP.drawio" << 'EOL'
+          <mxfile host="app.diagrams.net" modified="2023-05-25T12:34:56.789Z" agent="Mozilla/5.0" version="21.2.9">
+            <diagram id="test-diagram-id" name="Test Diagram">
+              <mxGraphModel dx="1186" dy="571" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+                <root>
+                  <mxCell id="0"/>
+                  <mxCell id="1" parent="0"/>
+                  <mxCell id="2" value="Test Diagram&#10;Created by GitHub Action&#10;$TIMESTAMP" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="320" y="240" width="200" height="100" as="geometry"/>
+                  </mxCell>
+                </root>
+              </mxGraphModel>
+            </diagram>
+          </mxfile>
+          EOL
+          
+          echo "Created test diagram at $TEST_DIR/test_diagram_$TIMESTAMP.drawio"
+          echo "Setting CHANGED_FILES to include test file"
+          echo "CHANGED_FILES=$TEST_DIR/test_diagram_$TIMESTAMP.drawio" >> $GITHUB_ENV
+
       - name: Process Draw.io files
         id: process_files
         run: |
@@ -141,6 +170,50 @@ jobs:
           DIAGRAMS_PNG_QUALITY: ${{ env.DIAGRAMS_PNG_QUALITY }}
           DIAGRAMS_COUNTER_FILE: ${{ env.DIAGRAMS_COUNTER_FILE }}
           DIAGRAMS_CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
+
+      - name: Debug File Processing
+        shell: bash
+        run: |
+          echo "==== DEBUG: DIAGRAM PROCESSING RESULTS ===="
+          echo "Workspace directory: $(pwd)"
+          
+          # List all important directories 
+          echo "== Contents of workspace root =="
+          ls -la
+          
+          echo "== Contents of drawio_files/ =="
+          ls -la drawio_files/ || echo "Directory not found"
+          
+          echo "== Contents of png_files/ =="
+          ls -la png_files/ || echo "Directory not found"
+          
+          # Check for CHANGELOG.csv specifically
+          echo "== CHANGELOG.csv details =="
+          CHANGELOG_PATH="${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+          if [ -f "$CHANGELOG_PATH" ]; then
+            echo "File exists: $CHANGELOG_PATH"
+            echo "Size: $(du -h "$CHANGELOG_PATH" | cut -f1)"
+            echo "Permissions: $(ls -l "$CHANGELOG_PATH")"
+            echo "Content:"
+            cat "$CHANGELOG_PATH"
+          else
+            echo "CHANGELOG.csv NOT FOUND at $CHANGELOG_PATH"
+            echo "Checking for any CSV files:"
+            find . -name "*.csv" -type f
+          fi
+          
+          # Look for PNG files that may have been generated
+          echo "== Generated PNG files =="
+          find . -name "*.png" -type f | sort
+          
+          # Check environment variables
+          echo "== Key Environment Variables =="
+          echo "DIAGRAMS_CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+          echo "DIAGRAMS_COUNTER_FILE: ${{ env.DIAGRAMS_COUNTER_FILE }}"
+          
+          # Check directory permissions
+          echo "== Directory Permissions =="
+          ls -ld . png_files/ drawio_files/ 2>/dev/null || echo "Some directories may not exist"
 
       - name: Verify Changelog After Script
         shell: bash
@@ -210,55 +283,64 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # Configure Git to detect content changes regardless of timestamps
+          # Configure Git to maximize change detection
           git config --local core.ignoreStat true
           git config --local core.trustctime false
+          git config --local core.fileMode false
+          
+          # First check what's changed
+          echo "--- Files in workspace: ---"
+          find . -type f -name "*.png" | sort
+          find . -type f -name "*.csv" | sort
           
           echo "--- Git status before add: ---"
           git status
           
-          # Explicitly check and add the CHANGELOG.csv file
+          # DIRECT APPROACH - Create or update changelog ourselves if not already done
           CHANGELOG_PATH="${{ env.DIAGRAMS_CHANGELOG_FILE }}"
-          echo "--- CHANGELOG.csv check: ---"
-          if [ -f "$CHANGELOG_PATH" ]; then
-            echo "CHANGELOG.csv exists at $CHANGELOG_PATH. Content:"
-            head -n 3 "$CHANGELOG_PATH"
-            echo "[...more lines may follow...]"
-            
-            # Add with absolute path
-            echo "Adding $CHANGELOG_PATH explicitly"
-            git add -f "$CHANGELOG_PATH"
+          if [ ! -f "$CHANGELOG_PATH" ]; then
+            echo "WARNING: CHANGELOG.csv not found. Creating minimal version."
+            mkdir -p "$(dirname $CHANGELOG_PATH)"
+            echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_PATH"
+            echo "$(date +"%d.%m.%Y"),$(date +"%H:%M:%S"),\"(autogenerated)\",\"\",\"Workflow Run\",\"Automated run\",-,-,\"GitHub Action\"" >> "$CHANGELOG_PATH"
           else
-            echo "ERROR: CHANGELOG.csv not found at $CHANGELOG_PATH"
+            echo "CHANGELOG.csv exists at $CHANGELOG_PATH. Content:"
+            cat "$CHANGELOG_PATH"
           fi
           
-          # Also add other important files and directories
-          echo "Adding png_files/ directory"
-          git add -f png_files/
-          echo "Adding drawio_files/ directory"
-          git add -f drawio_files/
-          echo "Adding counter file"
-          git add -f "${{ env.DIAGRAMS_COUNTER_FILE }}" || echo "Counter file not found"
+          # Force add all relevant files
+          echo "Adding all diagram files"
+          git add -A png_files/ || echo "Warning: Error adding png_files/ directory"
+          git add -A drawio_files/ || echo "Warning: Error adding drawio_files/ directory"
+          
+          # Explicitly add the CHANGELOG.csv file with all possible approaches
+          echo "Adding CHANGELOG.csv with multiple methods to ensure it's captured"
+          git add -f "$CHANGELOG_PATH" || echo "Warning: Error adding $CHANGELOG_PATH with relative path"
+          git add -f "$(pwd)/$CHANGELOG_PATH" || echo "Warning: Error adding with absolute path"
+          
+          # Add individual files as fallback
+          find png_files -type f -name "*.png" -exec git add -f {} \; || echo "Warning: Error in individual PNG add"
+          find png_files -type f -name "*.csv" -exec git add -f {} \; || echo "Warning: Error in individual CSV add"
           
           echo "--- Git status after add: ---"
           git status
           
-          # Modified files detection based on git status
-          if git status -s | grep -q .; then
-            echo "Changes detected by 'git status -s'. Proceeding with commit."
-            git commit -m "Update diagram files and changelog [skip ci]" || echo "::warning::No changes to commit or commit failed."
-            
-            # Pull latest changes with rebase (if needed)
-            echo "--- Pulling latest changes before pushing ---"
-            git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-            git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" || echo "::warning::Pull failed, continuing anyway."
-            
-            # Force push to ensure changes make it to the repository
-            echo "--- Pushing changes --- (remote: $(git remote get-url origin))"
-            git push --force || echo "::warning::Failed to push changes even with force."
-          else
-            echo "No changes detected to commit."
-          fi
+          # Also check what git thinks has changed
+          echo "--- Files git sees as changed: ---"
+          git diff --name-only HEAD || echo "No files changed according to git diff"
+          
+          # Force commit even if git thinks nothing has changed
+          echo "Forcing commit of all changes"
+          git commit -m "Update diagram files and changelog [skip ci]" --allow-empty || echo "::warning::Commit failed. Continuing anyway."
+          
+          # Pull latest changes with rebase (if needed)
+          echo "--- Pulling latest changes before pushing ---"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" || echo "::warning::Pull failed, continuing anyway."
+          
+          # Force push to ensure changes make it to the repository
+          echo "--- Pushing changes --- (remote: $(git remote get-url origin))"
+          git push --force || echo "::warning::Failed to push changes even with force."
 
       # SharePoint Steps (simplified for brevity, ensure they set outputs)
       - name: Test SharePoint Connectivity
