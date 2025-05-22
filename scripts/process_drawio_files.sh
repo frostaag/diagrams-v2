@@ -11,6 +11,7 @@ CHANGELOG_FILE="${DIAGRAMS_CHANGELOG_FILE:-${PNG_FILES_DIR}/CHANGELOG.csv}"
 PNG_SCALE="${DIAGRAMS_PNG_SCALE:-${PNG_SCALE:-2.0}}"
 PNG_QUALITY="${DIAGRAMS_PNG_QUALITY:-${PNG_QUALITY:-100}}" # Changed default from 500 to 100
 SPECIFIC_FILE="${SPECIFIC_FILE:-}"
+TRIGGERING_SHA="${GITHUB_SHA}" # Use GITHUB_SHA for the triggering commit
 
 # Function to detect changed files
 detect_changed_files() {
@@ -312,24 +313,40 @@ determine_version() {
 
 # Function to update changelog
 update_changelog() {
-  local file="$1"
+  local file="$1" # .drawio file path
   local basename=$(basename "$file")
   local filename_without_ext="${basename%.drawio}"
   
-  # Get commit info
-  local commit_hash=$(git log -1 --format="%h" -- "$file")
-  local commit_msg=$(git log -1 --format="%s" -- "$file")
-  local author_name=$(git log -1 --format="%an" -- "$file")
+  # Get commit info from the TRIGGERING_SHA for the changelog entry
+  local commit_hash_to_log=""
+  local commit_msg_to_log=""
+  local author_name_to_log=""
+
+  if [[ -n "$TRIGGERING_SHA" ]]; then
+    commit_hash_to_log=$(git log -1 --format="%h" "$TRIGGERING_SHA")
+    # Fetch only the subject line of the commit message
+    commit_msg_to_log=$(git log -1 --format="%s" "$TRIGGERING_SHA")
+    author_name_to_log=$(git log -1 --format="%an" "$TRIGGERING_SHA")
+  else
+    # Fallback if GITHUB_SHA was somehow not available (should not happen in Actions)
+    echo "Warning: GITHUB_SHA (TRIGGERING_SHA) not found. Falling back to per-file commit info for changelog entry related to $file." >&2
+    commit_hash_to_log=$(git log -1 --format="%h" -- "$file")
+    commit_msg_to_log=$(git log -1 --format="%s" -- "$file")
+    author_name_to_log=$(git log -1 --format="%an" -- "$file")
+  fi
   
   # Get current date and time
   local current_date=$(date +"%d.%m.%Y")
   local current_time=$(date +"%H:%M:%S")
   
-  # Determine version
+  # Determine version (this logic is per-file and uses its own commit history)
   local version=$(determine_version "$file")
   
+  # Escape the commit message for CSV: replace " with ""
+  local commit_msg_to_log_escaped=$(echo "$commit_msg_to_log" | sed 's/"/""/g')
+  
   # Create changelog entry
-  local entry="$current_date,$current_time,\"$filename_without_ext\",\"$file\",\"Converted to PNG\",\"$commit_msg\",$version,$commit_hash,\"$author_name\""
+  local entry="$current_date,$current_time,\\"$filename_without_ext\\",\\"$file\\",\\"Converted to PNG\\",\\"$commit_msg_to_log_escaped\\",$version,$commit_hash_to_log,\\"$author_name_to_log\\""
   
   # Create lock file for atomic updates
   local lock_file="${CHANGELOG_FILE}.lock"
