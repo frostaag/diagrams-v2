@@ -37,9 +37,8 @@ jobs:
       processed_count: ${{ steps.process_files.outputs.processed_count }}
       failed_count: ${{ steps.process_files.outputs.failed_count }}
       processed_files_list: ${{ steps.process_files.outputs.processed_files_list }}
-      job_status: ${{ job.status }} # 'success', 'failure', etc.
-      # Consolidate upload status from either Node.js or Shell script steps
-      upload_final_status: ${{ steps.nodejs_upload.outputs.upload_status || steps.shell_upload_fallback.outputs.upload_status || 'unknown' }}
+      job_status: ${{ job.status }}
+      upload_final_status: ${{ steps.determine_upload_status.outputs.final_status }}
     steps:
       - name: Checkout repository with history
         uses: actions/checkout@v3
@@ -83,23 +82,32 @@ jobs:
       - name: Process Draw.io files
         id: process_files
         run: |
-          if [ -n "${{ github.event.inputs.specific_file }}" ]; then
-            CHANGED_FILES="${{ github.event.inputs.specific_file }}"
+          # Determine changed files
+          if [ "${{ github.event_name }}" == "push" ]; then
+            # For push events, compare with the 'before' SHA if available and not all zeros.
+            # If 'before' is all zeros (e.g., new branch), diff against parent of current commit.
+            if [ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]; then
+              echo "New branch or 'before' SHA is zero. Using git diff-tree for SHA ${{ github.sha }}."
+              # This lists files changed in the commit itself relative to its parent(s)
+              CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} -- "drawio_files/**/*.drawio" | tr '\\n' ' ')
+            else
+              echo "Push event with 'before' SHA ${{ github.event.before }}. Using git diff."
+              CHANGED_FILES=$(git diff --name-only --diff-filter=AM ${{ github.event.before }} ${{ github.sha }} -- "drawio_files/**/*.drawio" | tr '\\n' ' ')
+            fi
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            if [ -n "${{ github.event.inputs.specific_file }}" ]; then
+              CHANGED_FILES="${{ github.event.inputs.specific_file }}"
+              echo "Workflow dispatch with specific file: $CHANGED_FILES"
+            else
+              echo "Workflow dispatch: processing all .drawio files in drawio_files/."
+              # Ensure this path is correct and matches your structure
+              CHANGED_FILES=$(find drawio_files -name "*.drawio" -type f -path "drawio_files/**/*.drawio" | tr '\\n' ' ')
+            fi
           else
-            # Corrected git diff for push events (comparing to previous commit)
-            # For workflow_dispatch without specific_file, it will be empty, then all files are processed.
-            BASE_REF=${{ github.event.before || github.sha }}
-            # If it's the first push to a branch, github.event.before is all zeros, use HEAD^
-            if [[ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]]; then
-                BASE_REF="HEAD^"
-            fi
-            CHANGED_FILES=$(git diff --name-only --diff-filter=AM $BASE_REF ${{ github.sha }} -- "drawio_files/*.drawio" | tr '\n' ' ')
-            if [ -z "$CHANGED_FILES" ] && [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-              echo "Manual trigger: processing all .drawio files."
-              CHANGED_FILES=$(find drawio_files -name "*.drawio" -type f | tr '\n' ' ')
-            fi
+            echo "Unrecognized event type: ${{ github.event_name }}. No files will be processed by default."
+            CHANGED_FILES=""
           fi
-          echo "Files to process: $CHANGED_FILES"
+          echo "Files to process: [$CHANGED_FILES]"
           echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
           
           bash ./scripts/process_drawio_files.sh
@@ -111,34 +119,22 @@ jobs:
           echo "failed_count=$FAILED_COUNT" >> $GITHUB_OUTPUT
           PROCESSED_FILES_LIST_FOR_OUTPUT=""
           if [ "$PROCESSED_COUNT" -gt 0 ]; then
-            PROCESSED_FILES_LIST_FOR_OUTPUT=$(find png_files -name "*.png" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" -printf "%f\n" | paste -sd ", " -)
+            PROCESSED_FILES_LIST_FOR_OUTPUT=$(find png_files -name "*.png" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" -printf "%f\\n" | paste -sd ", " -)
           fi
           echo "processed_files_list=$PROCESSED_FILES_LIST_FOR_OUTPUT" >> $GITHUB_OUTPUT
           
           echo "## Draw.io Processing Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Successfully processed files: $PROCESSED_COUNT" >> $GITHUB_STEP_SUMMARY
           echo "- Failed conversions: $FAILED_COUNT" >> $GITHUB_STEP_SUMMARY
-          
-          if [ $PROCESSED_COUNT -eq 0 ] && [ $FAILED_COUNT -eq 0 ]; then
-            echo "No files were processed." >> $GITHUB_STEP_SUMMARY
-            if [ -n "$CHANGED_FILES" ]; then
-              echo "WARNING: Files were detected but not processed: $CHANGED_FILES" >> $GITHUB_STEP_SUMMARY
-            fi
-          fi
-          
-          if [ $PROCESSED_COUNT -gt 0 ]; then
-            echo "### Processed Files:" >> $GITHUB_STEP_SUMMARY
-            find png_files -name "*.png" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" | while read -r file; do echo "- $(basename "$file")" >> $GITHUB_STEP_SUMMARY; done
-          fi
-          
+          echo "### Processed Files:" >> $GITHUB_STEP_SUMMARY
+          find png_files -name "*.png" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" | while read -r file; do echo "- $(basename "$file")" >> $GITHUB_STEP_SUMMARY; done
+          echo "### Failed Conversions:" >> $GITHUB_STEP_SUMMARY
+          find png_files -name "*.png.error" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" | while read -r file; do echo "- $(basename "${file%.error}")" >> $GITHUB_STEP_SUMMARY; done
           if [ $FAILED_COUNT -gt 0 ]; then
-            echo "### Failed Conversions:" >> $GITHUB_STEP_SUMMARY
-            find png_files -name "*.png.error" -type f -newer "${{ env.DIAGRAMS_CHANGELOG_FILE }}" | while read -r file; do echo "- $(basename "${file%.error}")" >> $GITHUB_STEP_SUMMARY; done
             echo "::warning::$FAILED_COUNT file(s) failed to convert. See summary for details."
           fi
         env:
           SPECIFIC_FILE: ${{ github.event.inputs.specific_file }}
-          # CHANGED_FILES is set in the script
           DIAGRAMS_PNG_SCALE: ${{ env.DIAGRAMS_PNG_SCALE }}
           DIAGRAMS_PNG_QUALITY: ${{ env.DIAGRAMS_PNG_QUALITY }}
           DIAGRAMS_COUNTER_FILE: ${{ env.DIAGRAMS_COUNTER_FILE }}
@@ -172,59 +168,121 @@ jobs:
       - name: Upload changelog to SharePoint (Node.js approach)
         id: nodejs_upload
         uses: actions/github-script@v6
-        continue-on-error: true # Allow fallback
+        continue-on-error: true # IMPORTANT: This allows the workflow to proceed to the next step even if this fails
         with:
           script: |
-            let uploadSuccess = 'false';
+            let uploadSuccess = 'false'; // Default to string 'false'
             try {
-              // ... (actual upload logic) ...
-              // On success: uploadSuccess = 'true';
-              console.log('Simulating Node.js upload...');
-              uploadSuccess = 'true'; // Placeholder for success
-            } catch (e) { console.error(e); }
-            core.setOutput('upload_status', uploadSuccess);
+              console.log('📤 Uploading changelog to SharePoint using Node.js approach...');
+              const fs = require('fs');
+              const { execSync } = require('child_process');
+              execSync('chmod +x ./scripts/sharepoint_upload.js');
+              const result = execSync('node ./scripts/sharepoint_upload.js', { env: process.env, encoding: 'utf8' });
+              console.log("SharePoint upload script output:", result);
+              if (result.includes("File uploaded successfully") || result.includes("✅")) {
+                console.log("✅ SharePoint upload via Node.js completed successfully.");
+                uploadSuccess = 'true'; // Set to string 'true' on success
+              } else {
+                console.log("⚠️ SharePoint upload via Node.js may have issues.");
+              }
+            } catch (error) {
+              console.error(`Error in Node.js upload: ${error.message}`);
+            }
+            core.setOutput('upload_status_output', uploadSuccess); // Use a distinct output name
           result-encoding: string
         env:
-          # ... necessary env vars for Node.js script ...
           TENANT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_TENANT_ID }}
           CLIENT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID }}
           CLIENT_SECRET: ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENTSECRET }}
-          # ... and so on
+          SITE_ID: ${{ env.DIAGRAMS_SHAREPOINT_SITE_ID }}
+          DRIVE_ID: ${{ env.DIAGRAMS_SHAREPOINT_DRIVE_ID }}
+          FOLDER_PATH: ${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}
+          FILE_NAME: ${{ env.DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME }}
+          FILE_PATH: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
+          DIAGRAMS_SHAREPOINT_URL: ${{ env.DIAGRAMS_SHAREPOINT_URL }}
 
       - name: Upload changelog to SharePoint (Shell script fallback)
         id: shell_upload_fallback
-        if: steps.nodejs_upload.outputs.upload_status != 'true'
-        continue-on-error: true
+        # Run if nodejs_upload did not succeed OR if it succeeded but its output was not 'true'
+        if: steps.nodejs_upload.outcome != 'success' || steps.nodejs_upload.outputs.upload_status_output != 'true'
+        continue-on-error: true # IMPORTANT: Allows workflow to proceed to determine_upload_status
         run: |
-          echo "Simulating shell script upload fallback..."
-          # ... (actual shell script logic) ...
-          # On success: echo "::set-output name=upload_status::true"
-          # On failure: echo "::set-output name=upload_status::false"
-          echo "::set-output name=upload_status::true" # Placeholder for success
+          echo "📤 Attempting SharePoint upload using shell scripts (fallback method)..."
+          chmod +x ./scripts/fixed_sharepoint_upload.sh ./scripts/upload_to_sharepoint.sh
+          export SHAREPOINT_DRIVE_ID="${SHAREPOINT_BASE_DRIVE_ID}"
+          export USE_DIRECT_CONNECTION="true"
+          export FORCE_TLS="true"
+          
+          UPLOAD_SUCCESS_SHELL='false' # Default to string 'false'
+          if bash ./scripts/fixed_sharepoint_upload.sh; then
+            echo "✅ SharePoint upload completed successfully (shell)."
+            UPLOAD_SUCCESS_SHELL='true' # Set to string 'true' on success
+          else
+            echo "::warning::Fixed SharePoint upload script failed. Trying original script..."
+            if bash ./scripts/upload_to_sharepoint.sh; then
+              echo "✅ Fallback SharePoint upload succeeded (original shell)."
+              UPLOAD_SUCCESS_SHELL='true' # Set to string 'true' on success
+            else
+              echo "❌ All SharePoint upload methods failed (shell path)."
+            fi
+          fi
+          echo "::set-output name=upload_status_output::$UPLOAD_SUCCESS_SHELL" # Use a distinct output name
         env:
-          # ... necessary env vars for shell script ...
           SHAREPOINT_CLIENT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID }}
           SHAREPOINT_CLIENT_SECRET: ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENTSECRET }}
-          # ... and so on
+          SHAREPOINT_TENANT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_TENANT_ID }}
+          SHAREPOINT_SITE_ID: ${{ env.DIAGRAMS_SHAREPOINT_SITE_ID }}
+          SHAREPOINT_URL: ${{ env.DIAGRAMS_SHAREPOINT_URL }}
+          SHAREPOINT_FOLDER: ${{ env.DIAGRAMS_SHAREPOINT_FOLDER }}
+          SHAREPOINT_OUTPUT_FILENAME: ${{ env.DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME }}
+          SHAREPOINT_BASE_DRIVE_ID: ${{ env.DIAGRAMS_SHAREPOINT_BASE_DRIVE_ID }}
+          CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
+
+      - name: Determine Final Upload Status
+        id: determine_upload_status
+        shell: bash
+        run: |
+          final_upload_status="false" # Default to string 'false'
+
+          # Check Node.js upload status
+          # Only access output if the step was successful
+          if [[ "${{ steps.nodejs_upload.outcome }}" == "success" && "${{ steps.nodejs_upload.outputs.upload_status_output }}" == "true" ]]; then
+            final_upload_status="true"
+            echo "Node.js upload reported success."
+          else
+            echo "Node.js upload did not report success (Outcome: ${{ steps.nodejs_upload.outcome }}, Output: ${{ steps.nodejs_upload.outputs.upload_status_output }})."
+            # If Node.js upload didn't succeed, check shell fallback
+            # Only access output if the step was successful (it might have been skipped if nodejs_upload was successful and its output was true)
+            if [[ "${{ steps.shell_upload_fallback.outcome }}" == "success" && "${{ steps.shell_upload_fallback.outputs.upload_status_output }}" == "true" ]]; then
+              final_upload_status="true"
+              echo "Shell fallback upload reported success."
+            else
+              echo "Shell fallback upload did not report success (Outcome: ${{ steps.shell_upload_fallback.outcome }}, Output: ${{ steps.shell_upload_fallback.outputs.upload_status_output }})."
+            fi
+          fi
+          
+          echo "Final determined upload status for job output: $final_upload_status"
+          echo "::set-output name=final_status::$final_upload_status"
 
   send_notification:
     name: Send Teams Notification
     runs-on: ubuntu-latest
     needs: process-drawio-files
-    if: always() # Always run this job
+    if: always()
     env:
-      DIAGRAMS_TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }} # Use the secret
+      # For an organization variable, use vars.context. For a secret, use secrets.context.
+      # Using vars. as per user indication. Hardcoded URL commented for reference.
+      # DIAGRAMS_TEAMS_WEBHOOK_URL: "https://frostaag.webhook.office.com/webhookb2/9cfe5169-8ba4-4923-b8d5-3ceacb07866c@a8d22be6-5bda-4bd7-8278-226c60c037ed/IncomingWebhook/1a12973b2f2d45cc972bfef2bace70b0/8c244c0d-59d9-4113-9646-16bf549a4a64/V26Sqxi96JeWY9ZYvmKydoRmWXY_NAy6wEVTz5o9ole5w1"
+      DIAGRAMS_TEAMS_WEBHOOK_URL: ${{ vars.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
       GITHUB_REPOSITORY_NAME: ${{ github.repository }}
       GITHUB_RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
       WORKFLOW_NAME: ${{ github.workflow }}
-      # Get outputs from the 'process-drawio-files' job
       JOB_STATUS: ${{ needs.process-drawio-files.outputs.job_status }}
       PROCESSED_COUNT: ${{ needs.process-drawio-files.outputs.processed_count }}
       FAILED_COUNT: ${{ needs.process-drawio-files.outputs.failed_count }}
       PROCESSED_FILES_LIST: ${{ needs.process-drawio-files.outputs.processed_files_list }}
       UPLOAD_STATUS: ${{ needs.process-drawio-files.outputs.upload_final_status }}
-      # Get the title from global env by re-declaring it here for the job
-      DIAGRAMS_TEAMS_NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
+      # Global env DIAGRAMS_TEAMS_NOTIFICATION_TITLE is directly available to scripts
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -243,14 +301,18 @@ jobs:
 
       - name: Send Notification based on Status
         env:
-          # Pass all necessary info to the scripts
+          # These are explicitly passed to the script environment
           AUTHOR_NAME: ${{ steps.commit_info.outputs.author_name }}
           COMMIT_MESSAGE: ${{ steps.commit_info.outputs.commit_message }}
           COMMIT_SHA_SHORT: ${{ steps.commit_info.outputs.commit_sha_short }}
-          # WORKFLOW_STATUS, PROCESSED_COUNT, FAILED_COUNT, PROCESSED_FILES_LIST, UPLOAD_STATUS, DIAGRAMS_TEAMS_NOTIFICATION_TITLE, DIAGRAMS_TEAMS_WEBHOOK_URL are already in job env
+          # Other variables like JOB_STATUS, UPLOAD_STATUS, DIAGRAMS_TEAMS_WEBHOOK_URL, 
+          # and DIAGRAMS_TEAMS_NOTIFICATION_TITLE are inherited from job or global env.
         run: |
           echo "Job status from previous job: $JOB_STATUS"
-          echo "Upload status: $UPLOAD_STATUS"
+          echo "Final Upload status: $UPLOAD_STATUS"
+          echo "Notification Title (from global env): $DIAGRAMS_TEAMS_NOTIFICATION_TITLE"
+          echo "Webhook URL (from job env using vars): $DIAGRAMS_TEAMS_WEBHOOK_URL"
+
           if [ "$JOB_STATUS" = "success" ]; then
             ./scripts/success_notification.sh
           else
