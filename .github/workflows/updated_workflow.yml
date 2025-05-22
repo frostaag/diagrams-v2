@@ -75,32 +75,10 @@ jobs:
 
       - name: Create output directories
         run: |
-          echo "Ensuring output directories and essential files exist..."
+          echo "Ensuring output directories exist..."
           mkdir -p ./png_files
           mkdir -p ./drawio_files
-
-          COUNTER_FILE="${{ env.DIAGRAMS_COUNTER_FILE }}"
-          CHANGELOG_FILE="${{ env.DIAGRAMS_CHANGELOG_FILE }}"
-
-          # Check if the target is a directory, which would be an error
-          if [ -d "$COUNTER_FILE" ]; then
-            echo "Error: Counter file path '$COUNTER_FILE' is a directory. Please resolve this conflict." >&2
-            exit 1
-          fi
-          if [ ! -f "$COUNTER_FILE" ]; then
-            echo "Creating counter file: $COUNTER_FILE"
-            echo "001" > "$COUNTER_FILE"
-          fi
-
-          if [ -d "$CHANGELOG_FILE" ]; then
-            echo "Error: Changelog file path '$CHANGELOG_FILE' is a directory. Please resolve this conflict." >&2
-            exit 1
-          fi
-          if [ ! -f "$CHANGELOG_FILE" ]; then
-            echo "Creating changelog file: $CHANGELOG_FILE"
-            echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
-          fi
-          echo "Directory and file setup complete."
+          echo "Output directories ensured."
 
       - name: Process Draw.io files
         id: process_files
