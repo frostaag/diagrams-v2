@@ -10,7 +10,22 @@ SHAREPOINT_FOLDER="${SHAREPOINT_FOLDER:-Diagrams}"
 OUTPUT_FILENAME="${SHAREPOINT_OUTPUT_FILENAME:-Diagrams_Changelog.csv}"
 
 # Hard-coded drive ID from advanced_sharepoint_test.sh
-DRIVE_ID="${SHAREPOINT_DRIVE_ID:-21e1e0f0-9247-45ab-9f8c-1d50c5c077db}"
+DRIVE_ID="${SHAREPOINT_DRIVE_ID}"
+
+# Use b! format if the drive ID doesn't already have it
+if [[ "$DRIVE_ID" != "b!"* && "$DRIVE_ID" != *"/" ]]; then
+  # Based on the error message, we need to convert to the b! format that SharePoint expects
+  # This is derived from the site ID and drive ID which we have
+  SITE_ID_NO_DASHES=$(echo "$SHAREPOINT_SITE_ID" | tr -d '-')
+  DRIVE_ID_NO_DASHES=$(echo "$DRIVE_ID" | tr -d '-')
+  
+  # Construct the b! format ID that SharePoint expects
+  # Format: b!<site-id-no-dashes>-<drive-id-no-dashes>
+  B_FORMATTED_ID="b!${SITE_ID_NO_DASHES}-${DRIVE_ID_NO_DASHES}"
+  
+  echo "🔄 Converting drive ID to b! format: $B_FORMATTED_ID"
+  DRIVE_ID="$B_FORMATTED_ID"
+fi
 
 # Required values
 if [[ -z "$SHAREPOINT_CLIENT_ID" || -z "$SHAREPOINT_CLIENT_SECRET" || -z "$SHAREPOINT_TENANT_ID" || -z "$SHAREPOINT_SITE_ID" ]]; then
@@ -80,20 +95,23 @@ fi
 echo "📤 Uploading changelog to SharePoint..."
 FILE_SIZE=$(wc -c < "$CHANGELOG_FILE")
 
-# Direct approach with known path
+# Try multiple path formats for maximum compatibility
+echo "Trying multiple path formats to ensure compatibility..."
+
+# Option 1: Using the b! format with /root:/Documents/path
 UPLOAD_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
-echo "Upload URL: $UPLOAD_URL"
+echo "🔄 Trying upload with URL (format 1): $UPLOAD_URL"
 
 # Upload with curl
-UPLOAD_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -v -X PUT "$UPLOAD_URL" \
+UPLOAD_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$UPLOAD_URL" \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: text/csv" \
   -H "Content-Length: $FILE_SIZE" \
   --data-binary "@$CHANGELOG_FILE" 2>&1)
 
-# Check for success
+# Check for success with first format
 if [[ "$UPLOAD_RESPONSE" == *"\"id\""* ]]; then
-  echo "✅ Upload successful!"
+  echo "✅ Upload successful with format 1!"
   
   # Extract the URL if available
   WEB_URL=$(echo "$UPLOAD_RESPONSE" | grep -o '"webUrl":"[^"]*' | cut -d'"' -f4 || echo "")
@@ -103,24 +121,53 @@ if [[ "$UPLOAD_RESPONSE" == *"\"id\""* ]]; then
   
   exit 0
 else
-  echo "❌ Upload failed"
-  echo "Response: $UPLOAD_RESPONSE"
+  echo "❌ Format 1 upload failed"
+  if [[ "$UPLOAD_RESPONSE" == *"error"* ]]; then
+    ERROR_MSG=$(echo "$UPLOAD_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")
+    echo "Error: $ERROR_MSG"
+  else
+    echo "Response: $UPLOAD_RESPONSE"
+  fi
   
-  # Attempt fallback to simplified path
-  echo "🔄 Trying fallback upload path..."
-  FALLBACK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Diagrams/${OUTPUT_FILENAME}:/content"
+  # Attempt fallback with format 2: Using items/root: path
+  echo "🔄 Trying fallback format 2..."
+  FALLBACK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+  echo "URL: $FALLBACK_URL"
   
-  FALLBACK_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -v -X PUT "$FALLBACK_URL" \
+  FALLBACK_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$FALLBACK_URL" \
     -H "Authorization: Bearer $ACCESS_TOKEN" \
     -H "Content-Type: text/csv" \
     -H "Content-Length: $FILE_SIZE" \
     --data-binary "@$CHANGELOG_FILE" 2>&1)
   
   if [[ "$FALLBACK_RESPONSE" == *"\"id\""* ]]; then
-    echo "✅ Fallback upload successful!"
+    echo "✅ Format 2 upload successful!"
     exit 0
   else
-    echo "❌ Fallback upload also failed"
-    exit 1
+    echo "❌ Format 2 upload failed"
+    if [[ "$FALLBACK_RESPONSE" == *"error"* ]]; then
+      ERROR_MSG=$(echo "$FALLBACK_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")
+      echo "Error: $ERROR_MSG"
+    fi
+    
+    # Last attempt with format 3: Try direct Diagrams folder
+    echo "🔄 Trying fallback format 3 (direct to Diagrams folder)..."
+    LAST_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Diagrams/${OUTPUT_FILENAME}:/content"
+    echo "URL: $LAST_URL"
+    
+    LAST_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$LAST_URL" \
+      -H "Authorization: Bearer $ACCESS_TOKEN" \
+      -H "Content-Type: text/csv" \
+      -H "Content-Length: $FILE_SIZE" \
+      --data-binary "@$CHANGELOG_FILE" 2>&1)
+    
+    if [[ "$LAST_RESPONSE" == *"\"id\""* ]]; then
+      echo "✅ Format 3 upload successful!"
+      exit 0
+    else
+      echo "❌ All upload formats failed"
+      echo "Final error: $(echo "$LAST_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "Unknown error")"
+      exit 1
+    fi
   fi
 fi
