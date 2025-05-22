@@ -15,14 +15,19 @@ if [[ -z "$WEBHOOK_URL" ]]; then
     exit 0
 fi
 
-# Create failure message
-ERROR_MESSAGE="The Draw.io processing workflow failed.<br><br>"
-ERROR_MESSAGE+="**Possible issues to check:**<br>"
-ERROR_MESSAGE+="- Draw.io installation problems<br>"
-ERROR_MESSAGE+="- File access permissions<br>"
-ERROR_MESSAGE+="- SharePoint connectivity<br>"
-ERROR_MESSAGE+="- Invalid diagram files<br><br>"
-ERROR_MESSAGE+="Please check the [workflow logs](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) for details."
+# Create failure message in the requested format
+ERROR_MESSAGE="❌ Draw.io Conversion Workflow Failed<br>"
+ERROR_MESSAGE+="GitHub Actions workflow run failed<br><br>"
+ERROR_MESSAGE+="**Repository**<br>"
+ERROR_MESSAGE+="${GITHUB_REPOSITORY}<br><br>"
+ERROR_MESSAGE+="**Workflow**<br>"
+ERROR_MESSAGE+="${GITHUB_WORKFLOW}<br><br>"
+ERROR_MESSAGE+="**Commit**<br>"
+ERROR_MESSAGE+="${GITHUB_SHA}<br><br>"
+ERROR_MESSAGE+="**Triggered by**<br>"
+ERROR_MESSAGE+="${GITHUB_ACTOR:-System}<br><br>"
+ERROR_MESSAGE+="**Run ID**<br>"
+ERROR_MESSAGE+="${GITHUB_RUN_ID}"
 
 # Escape special characters in message to avoid JSON issues
 ERROR_MESSAGE=$(echo "$ERROR_MESSAGE" | sed 's/"/\\"/g')
@@ -30,8 +35,8 @@ ERROR_MESSAGE=$(echo "$ERROR_MESSAGE" | sed 's/"/\\"/g')
 # Send notification
 ./scripts/send_teams_notification.sh \
   "$WEBHOOK_URL" \
-  "⚠️ Draw.io Processing Failed" \
-  "Error occurred at $(date '+%Y-%m-%d %H:%M:%S')" \
+  "❌ Draw.io Conversion Workflow Failed" \
+  "GitHub Actions workflow run failed" \
   "$ERROR_MESSAGE" \
   "FF0000" \
   "$GITHUB_REPOSITORY" \

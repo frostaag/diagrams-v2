@@ -162,8 +162,8 @@ upload_to_sharepoint() {
   
   # Use direct drive ID from testing results
   echo "📁 Using fixed Documents library ID: $SHAREPOINT_DRIVE_ID"
-  # Correct path format for Shared Documents/Diagrams folder (fix path issue) with URL encoding for spaces
-  local upload_path="${site_url}/drives/${SHAREPOINT_DRIVE_ID}/root:/Shared%20Documents/${destination}:/content"
+  # Correct path format for Diagrams folder directly in root
+  local upload_path="${site_url}/drives/${SHAREPOINT_DRIVE_ID}/root:/Diagrams/${OUTPUT_FILENAME}:/content"
   echo "Final upload path: $upload_path"
   
   # Upload the file
@@ -187,8 +187,8 @@ upload_to_sharepoint() {
     # Try alternate paths
     echo "🔄 Trying alternate upload paths..."
     
-    # Try path with Shared Documents folder directly with URL encoding for spaces
-    local alt_path="${site_url}/drives/${SHAREPOINT_DRIVE_ID}/root:/Shared%20Documents/${OUTPUT_FILENAME}:/content"
+    # Try path with output file directly in root
+    local alt_path="${site_url}/drives/${SHAREPOINT_DRIVE_ID}/root:/${OUTPUT_FILENAME}:/content"
     echo "Trying path: $alt_path"
     
     local alt_response=$(curl $curl_opts -X PUT \

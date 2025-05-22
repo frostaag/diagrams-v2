@@ -44,7 +44,7 @@ echo "===== DIRECT SHAREPOINT UPLOAD ====="
 echo "Using fixed path and known drive ID"
 echo "Site ID: $SHAREPOINT_SITE_ID" 
 echo "Drive ID: $DRIVE_ID"
-echo "Target: Shared Documents/$SHAREPOINT_FOLDER/$OUTPUT_FILENAME"
+echo "Target: Diagrams/$OUTPUT_FILENAME (directly in root library)"
 echo "======================================"
 
 # Get token
@@ -70,18 +70,18 @@ else
   echo "✅ Got access token (${#ACCESS_TOKEN} characters)"
 fi
 
-# Ensure Diagrams folder exists
-echo "📁 Ensuring Shared Documents/Diagrams folder exists..."
-FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Shared Documents/Diagrams"
+# Ensure Diagrams folder exists (directly in root)
+echo "📁 Checking if Diagrams folder exists in root..."
+FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Diagrams"
 FOLDER_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X GET "$FOLDER_CHECK_URL" \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Accept: application/json")
 
 if [[ "$FOLDER_RESPONSE" == *"error"* && "$FOLDER_RESPONSE" == *"itemNotFound"* ]]; then
-  echo "📁 Diagrams folder does not exist. Creating it..."
+  echo "📁 Diagrams folder does not exist. Creating it directly in root..."
   
-  # Create Diagrams folder
-  CREATE_FOLDER_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Shared Documents:/children"
+  # Create Diagrams folder directly in root
+  CREATE_FOLDER_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/children"
   CREATE_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X POST "$CREATE_FOLDER_URL" \
     -H "Authorization: Bearer $ACCESS_TOKEN" \
     -H "Content-Type: application/json" \
@@ -105,10 +105,9 @@ FILE_SIZE=$(wc -c < "$CHANGELOG_FILE")
 # Try multiple path formats for maximum compatibility
 echo "Trying multiple path formats to ensure compatibility..."
 
-# Option 1: Using the b! format with /root:/Shared Documents/path (standard path)
-# Use URL encoding for spaces in "Shared Documents"
-UPLOAD_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Shared%20Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
-echo "🔄 Trying upload with URL (format 1 - Shared Documents with URL encoding): $UPLOAD_URL"
+# Option 1: Using the b! format with /root:/Diagrams/path (directly in root)
+UPLOAD_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Diagrams/${OUTPUT_FILENAME}:/content"
+echo "🔄 Trying upload with URL (format 1 - Direct to Diagrams folder): $UPLOAD_URL"
 
 # Upload with curl
 UPLOAD_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$UPLOAD_URL" \
@@ -135,9 +134,9 @@ else
     echo "Error: $ERROR_MSG"
   fi
   
-  # Try with "Documents" path instead of "Shared Documents"
-  echo "🔄 Trying with 'Documents' path..."
-  DOCS_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+  # Try with direct root path
+  echo "🔄 Trying with direct root path..."
+  DOCS_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/root:/${OUTPUT_FILENAME}:/content"
   echo "URL: $DOCS_URL"
   
   DOCS_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$DOCS_URL" \
@@ -163,7 +162,7 @@ else
   
   # Attempt fallback with format 2: Using items/root: path
   echo "🔄 Trying fallback format 2..."
-  FALLBACK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Shared Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+  FALLBACK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Diagrams/${OUTPUT_FILENAME}:/content"
   echo "URL: $FALLBACK_URL"
   
   FALLBACK_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$FALLBACK_URL" \
@@ -182,9 +181,9 @@ else
       echo "Error: $ERROR_MSG"
     fi
     
-    # Try with "Documents" path with items format
-    echo "🔄 Trying with 'Documents' path (items format)..."
-    DOCS_ITEMS_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+    # Try with direct items format
+    echo "🔄 Trying with direct items format..."
+    DOCS_ITEMS_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID}/items/root:/Diagrams/${OUTPUT_FILENAME}:/content"
     echo "URL: $DOCS_ITEMS_URL"
     
     DOCS_ITEMS_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$DOCS_ITEMS_URL" \
@@ -224,7 +223,7 @@ else
         # Try directly using drive ID without the b! prefix as a last resort
         echo "🔄 Trying last resort with base drive ID..."
         BASE_DRIVE_ID="${DRIVE_ID#b!}"  # Remove b! prefix if present
-        BASE_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${BASE_DRIVE_ID}/root:/Shared%20Documents/${SHAREPOINT_FOLDER}/${OUTPUT_FILENAME}:/content"
+        BASE_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${BASE_DRIVE_ID}/root:/Diagrams/${OUTPUT_FILENAME}:/content"
         
         BASE_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X PUT "$BASE_URL" \
           -H "Authorization: Bearer $ACCESS_TOKEN" \

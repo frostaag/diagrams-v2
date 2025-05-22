@@ -18,19 +18,30 @@ fi
 # Extract processed files from git
 PROCESSED_FILES=$(git diff --name-only HEAD~1 HEAD -- 'png_files/*.png' | sed 's|png_files/||g' | sed 's|.png$||g')
 
-# Create success message
-MESSAGE="**Draw.io Diagrams Processing Completed**<br><br>"
+# Create success message in the requested format
+MESSAGE="✅ Draw.io Conversion Workflow Succeeded<br>"
+MESSAGE+="GitHub Actions workflow run completed successfully<br><br>"
+MESSAGE+="**Repository**<br>"
+MESSAGE+="${GITHUB_REPOSITORY}<br><br>"
+MESSAGE+="**Workflow**<br>"
+MESSAGE+="${GITHUB_WORKFLOW}<br><br>"
+MESSAGE+="**Commit**<br>"
+MESSAGE+="${GITHUB_SHA}<br><br>"
+MESSAGE+="**Triggered by**<br>"
+MESSAGE+="${GITHUB_ACTOR:-System}<br><br>"
+MESSAGE+="**Run ID**<br>"
+MESSAGE+="${GITHUB_RUN_ID}<br><br>"
 
 # Add file list if we have processed files
 if [ -n "$PROCESSED_FILES" ]; then
-  MESSAGE+="Successfully processed the following diagrams:<br>"
+  MESSAGE+="**Processed Files:**<br>"
   echo "$PROCESSED_FILES" | while read -r file; do
     if [ -n "$file" ]; then
       MESSAGE+="- $file<br>"
     fi
   done
 else
-  MESSAGE+="Workflow completed successfully, but no diagrams were processed."
+  MESSAGE+="No diagrams were processed in this run."
 fi
 
 # Escape special characters in message to avoid JSON issues
@@ -39,10 +50,10 @@ MESSAGE=$(echo "$MESSAGE" | sed 's/"/\\"/g')
 # Send notification
 ./scripts/send_teams_notification.sh \
   "$WEBHOOK_URL" \
-  "Draw.io Diagrams Processing Update" \
-  "Process completed at $(date '+%Y-%m-%d %H:%M:%S')" \
+  "✅ Draw.io Conversion Workflow Succeeded" \
+  "GitHub Actions workflow run completed successfully" \
   "$MESSAGE" \
-  "0076D7" \
+  "00FF00" \
   "$GITHUB_REPOSITORY" \
   "$GITHUB_SHA" \
   "$GITHUB_WORKFLOW" \

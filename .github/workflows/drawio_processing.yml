@@ -294,10 +294,10 @@ jobs:
           SHAREPOINT_BASE_DRIVE_ID: ${{ env.DIAGRAMS_SHAREPOINT_BASE_DRIVE_ID }}
           CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
 
-      - name: Create Diagrams folder in SharePoint if needed
+      - name: Check if Diagrams folder exists in SharePoint
         if: vars.DIAGRAMS_SHAREPOINT_CLIENT_ID != '' && vars.DIAGRAMS_SHAREPOINT_TENANT_ID != ''
         run: |
-          echo "📁 Checking if Shared Documents/Diagrams folder exists in SharePoint..."
+          echo "📁 Checking if Diagrams folder exists in SharePoint (default library)..."
           
           # Auth to Microsoft Graph
           echo "Getting access token..."
@@ -319,31 +319,25 @@ jobs:
             echo "Drive ID was set to 'auto'; using base drive ID for this step: ${DRIVE_ID_TO_USE}"
           fi
           
-          # Check if Diagrams folder exists in Shared Documents (correct path) with URL encoding for spaces
-          FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Shared%20Documents/Diagrams"
+          # Check if Diagrams folder exists directly in the root (default document library)
+          FOLDER_CHECK_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Diagrams"
+          echo "Checking for Diagrams folder at: $FOLDER_CHECK_URL"
+          
           FOLDER_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X GET "$FOLDER_CHECK_URL" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Accept: application/json")
           
-          if [[ "$FOLDER_RESPONSE" == *"error"* && "$FOLDER_RESPONSE" == *"itemNotFound"* ]]; then
-            echo "📁 Diagrams folder does not exist. Creating it..."
-            
-            # Create Diagrams folder in Shared Documents (correct path) with URL encoding for spaces
-            CREATE_FOLDER_URL="https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/drives/${DRIVE_ID_TO_USE}/root:/Shared%20Documents:/children"
-            CREATE_RESPONSE=$(curl --noproxy '*' --tlsv1.2 -s -X POST "$CREATE_FOLDER_URL" \
-              -H "Authorization: Bearer $ACCESS_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"name":"Diagrams","folder":{},"@microsoft.graph.conflictBehavior":"replace"}')
-            
-            if [[ "$CREATE_RESPONSE" == *"id"* ]]; then
-              echo "✅ Diagrams folder created successfully."
-            else
-              echo "::warning::Failed to create Diagrams folder. Will try to upload anyway."
-            fi
-          elif [[ "$FOLDER_RESPONSE" == *"id"* ]]; then
+          echo "Folder check response (partial): ${FOLDER_RESPONSE:0:100}..."
+          
+          if [[ "$FOLDER_RESPONSE" == *"\"id\":"* ]]; then
             echo "✅ Diagrams folder already exists."
+            echo "DIAGRAMS_FOLDER_EXISTS=true" >> $GITHUB_ENV
+          elif [[ "$FOLDER_RESPONSE" == *"error"* && "$FOLDER_RESPONSE" == *"itemNotFound"* ]]; then
+            echo "📁 Diagrams folder does not exist. It will be created during upload."
+            echo "DIAGRAMS_FOLDER_EXISTS=false" >> $GITHUB_ENV
           else
-            echo "::warning::Could not check if Diagrams folder exists. Will try to upload anyway."
+            echo "⚠️ Couldn't determine if Diagrams folder exists. Will attempt to use it directly."
+            echo "DIAGRAMS_FOLDER_EXISTS=unknown" >> $GITHUB_ENV
           fi
         env:
           SHAREPOINT_CLIENT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID }}
@@ -487,6 +481,7 @@ jobs:
         env:
           TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
           NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
+          GITHUB_ACTOR: ${{ github.actor }}
           WEBHOOK_CHECK: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK != '' }}
         run: |
           # Make scripts executable
@@ -497,10 +492,16 @@ jobs:
           if [ -n "$TEAMS_WEBHOOK_URL" ]; then
             echo "Teams webhook URL is configured (value masked)"
             echo "TEAMS_WEBHOOK_URL length: ${#TEAMS_WEBHOOK_URL} characters"
-            echo "First 5 characters (masked): ${TEAMS_WEBHOOK_URL:0:5}****"
           else
             echo "Teams webhook URL is not configured"
           fi
+          
+          # Print information used for notification
+          echo "Workflow info:"
+          echo "- Repository: $GITHUB_REPOSITORY"
+          echo "- Actor: $GITHUB_ACTOR"
+          echo "- Workflow: $GITHUB_WORKFLOW"
+          echo "- Run ID: $GITHUB_RUN_ID"
           
           # Check if webhook URL is available
           if [ -n "$TEAMS_WEBHOOK_URL" ]; then
@@ -522,6 +523,7 @@ jobs:
         env:
           TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
           NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
+          GITHUB_ACTOR: ${{ github.actor }}
         run: |
           # Make scripts executable
           chmod +x ./scripts/send_teams_notification.sh
@@ -533,6 +535,13 @@ jobs:
           else
             echo "Teams webhook URL is not configured"
           fi
+          
+          # Print information used for notification
+          echo "Workflow info:"
+          echo "- Repository: $GITHUB_REPOSITORY"
+          echo "- Actor: $GITHUB_ACTOR"
+          echo "- Workflow: $GITHUB_WORKFLOW"
+          echo "- Run ID: $GITHUB_RUN_ID"
           
           # Check if webhook URL is available
           if [ -n "$TEAMS_WEBHOOK_URL" ]; then
