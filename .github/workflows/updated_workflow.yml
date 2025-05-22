@@ -151,17 +151,6 @@ jobs:
           if [ -f "${{ env.DIAGRAMS_CHANGELOG_FILE }}" ]; then
             echo "CHANGELOG.csv exists. Content:"
             cat "${{ env.DIAGRAMS_CHANGELOG_FILE }}"
-            echo ""
-            echo "--- File encoding and line endings check ---"
-            echo "File type:"
-            file "${{ env.DIAGRAMS_CHANGELOG_FILE }}"
-            echo "Hex dump to check line endings (CR=0d, LF=0a):"
-            hexdump -C "${{ env.DIAGRAMS_CHANGELOG_FILE }}" | head -10
-            echo "Line count:"
-            wc -l < "${{ env.DIAGRAMS_CHANGELOG_FILE }}"
-            echo ""
-            # Create a reference copy of the file
-            cp "${{ env.DIAGRAMS_CHANGELOG_FILE }}" /tmp/changelog_reference.csv
           else
             echo "CHANGELOG.csv does NOT exist at ${{ env.DIAGRAMS_CHANGELOG_FILE }}"
           fi
@@ -169,78 +158,34 @@ jobs:
 
       - name: Commit changes
         run: |
-          echo "--- Preparing to commit changes (current dir: $(pwd)) ---"
+          echo "--- Preparing to commit changes ---"
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          
-          # Force Git to check for file changes based on content, not timestamp
-          git config --local core.safecrlf false
           
           echo "--- Git status before add: ---"
           git status -s
           
-          # First reset any existing staged changes to ensure clean state
-          git reset
+          echo "--- Adding files: ---"
+          git add png_files/ drawio_files/ "${{ env.DIAGRAMS_CHANGELOG_FILE }}" "${{ env.DIAGRAMS_COUNTER_FILE }}"
           
-          # Touch files to ensure modification time is updated
-          echo "Touching files to ensure Git notices changes..."
-          touch png_files/CHANGELOG.csv
-          
-          echo "--- Adding files individually with verbose output: ---"
-          echo "Adding png_files/ directory:"
-          git add -v png_files/
-          echo "Adding drawio_files/ directory:"
-          git add -v drawio_files/
-          
-          # Check status after adding
           echo "--- Git status after add: ---"
           git status -s
           
-          # More reliable check for changes - use git status output directly
+          # Use git status to check for changes
           if git status -s | grep -q .; then
-            echo "Changes detected by 'git status -s'. Proceeding with commit."
-            
-            # Show what's about to be committed
-            echo "--- Files about to be committed: ---"
-            git diff --name-status --staged
-            
-            echo "--- Staged diff for CHANGELOG.csv: ---"
-            git diff --staged "${{ env.DIAGRAMS_CHANGELOG_FILE }}" || echo "No diff for CHANGELOG.csv (this indicates a problem)"
-            
-            # Create commit
+            echo "Changes detected. Proceeding with commit."
             git commit -m "Update diagram files and changelog [skip ci]"
             
-            echo "--- Pulling latest changes before pushing ---"
+            # Pull latest changes with rebase
             git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-            
-            # Pull with rebase
             git pull --rebase origin $(git rev-parse --abbrev-ref HEAD) || echo "::warning::Failed to pull latest changes."
             
-            # Verify CHANGELOG.csv wasn't changed during rebase
-            echo "--- Verifying CHANGELOG.csv content after pull: ---"
-            if [ -f "${{ env.DIAGRAMS_CHANGELOG_FILE }}" ]; then
-              echo "CHANGELOG.csv exists post-pull. Content:"
-              cat "${{ env.DIAGRAMS_CHANGELOG_FILE }}"
-              echo ""
-              if [ -f "/tmp/changelog_reference.csv" ]; then
-                echo "Comparing with reference copy:"
-                diff -u "/tmp/changelog_reference.csv" "${{ env.DIAGRAMS_CHANGELOG_FILE }}" || echo "Files differ after pull/rebase"
-              fi
-            fi
-            
+            # Push changes
             echo "--- Pushing changes --- (remote: $(git remote get-url origin))"
-            # Try to force push if normal push fails
-            git push || git push --force || echo "::warning::Failed to push changes even with force."
+            git push || echo "::warning::Failed to push changes. Check GITHUB_TOKEN permissions and branch protection rules."
           else
-            echo "No changes detected by 'git status -s'. Checking if CHANGELOG.csv was modified:"
-            if [ -f "/tmp/changelog_reference.csv" ] && [ -f "${{ env.DIAGRAMS_CHANGELOG_FILE }}" ]; then
-              echo "Comparing CHANGELOG.csv with reference copy:"
-              diff -u "/tmp/changelog_reference.csv" "${{ env.DIAGRAMS_CHANGELOG_FILE }}" || echo "Files differ but Git doesn't detect changes"
-            fi
-            echo "Manual verification of CHANGELOG.csv content:"
-            cat "${{ env.DIAGRAMS_CHANGELOG_FILE }}" || echo "Could not read CHANGELOG.csv"
+            echo "No changes detected to commit."
           fi
-          echo "--- Commit changes step complete ---"
 
       # SharePoint Steps (simplified for brevity, ensure they set outputs)
       - name: Test SharePoint Connectivity
