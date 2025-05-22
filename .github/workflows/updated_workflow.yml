@@ -156,6 +156,54 @@ jobs:
           fi
           echo "--- Verification complete ---"
 
+      - name: Verify Diagram Processing
+        shell: bash
+        run: |
+          echo "--- Detailed verification of diagram processing ---"
+          
+          # Check directories
+          echo "1. Directory structure verification:"
+          ls -la .
+          echo ""
+          
+          if [ -d "drawio_files" ]; then
+            echo "drawio_files/ directory exists"
+            echo "Content of drawio_files/:"
+            ls -la drawio_files/
+          else
+            echo "ERROR: drawio_files/ directory does not exist"
+          fi
+          echo ""
+          
+          if [ -d "png_files" ]; then
+            echo "png_files/ directory exists"
+            echo "Content of png_files/:"
+            ls -la png_files/
+          else
+            echo "ERROR: png_files/ directory does not exist"
+          fi
+          echo ""
+          
+          # Check for changed files
+          echo "2. Changed files verification:"
+          git diff --name-status
+          echo ""
+          
+          # Check if CHANGELOG.csv exists and was updated
+          echo "3. Changelog verification:"
+          CHANGELOG_PATH="${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+          
+          if [ -f "$CHANGELOG_PATH" ]; then
+            echo "CHANGELOG.csv exists at $CHANGELOG_PATH"
+            echo "File size: $(du -h "$CHANGELOG_PATH" | cut -f1)"
+            echo "Last modified: $(stat -c '%y' "$CHANGELOG_PATH")"
+            echo "File permissions: $(stat -c '%a %A' "$CHANGELOG_PATH")"
+            echo "File content:"
+            cat "$CHANGELOG_PATH"
+          else
+            echo "ERROR: CHANGELOG.csv does not exist at $CHANGELOG_PATH"
+          fi
+
       - name: Commit changes
         run: |
           echo "--- Preparing to commit changes ---"

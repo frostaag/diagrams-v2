@@ -378,16 +378,33 @@ update_changelog() {
   echo "[update_changelog] Ensuring changelog directory exists: $changelog_dir" >&2
   mkdir -p "$changelog_dir" || { echo "[update_changelog] Failed to create directory for changelog: $changelog_dir" >&2; return 1; }
 
-  # Check if changelog file exists and is readable
-  if [[ ! -f "$CHANGELOG_FILE" || ! -r "$CHANGELOG_FILE" ]]; then
-    echo "[update_changelog] Changelog file does not exist or is not readable at: $CHANGELOG_FILE. Creating new file." >&2
+  # Check if changelog file exists and is readable  
+  if [[ ! -f "$CHANGELOG_FILE" ]]; then
+    echo "[update_changelog] Changelog file does not exist at: $CHANGELOG_FILE. Creating new file." >&2
+    # Create new file with header
     echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE" || { 
       echo "[update_changelog] Failed to create new changelog file: $CHANGELOG_FILE" >&2
       return 1
     }
     echo "[update_changelog] Created new changelog file with header." >&2
+    # Ensure the file is created correctly
+    if [[ ! -f "$CHANGELOG_FILE" ]]; then
+      echo "[update_changelog] ERROR: Failed to create changelog file even after direct attempt." >&2
+      return 1
+    fi
+    # Verify file can be read
+    if ! cat "$CHANGELOG_FILE" > /dev/null 2>&1; then
+      echo "[update_changelog] ERROR: Created changelog file but cannot read it." >&2
+      return 1
+    fi
+    echo "[update_changelog] Successfully created and verified new changelog file." >&2
   else
     echo "[update_changelog] Existing changelog file found at: $CHANGELOG_FILE" >&2
+    # Check if file is readable
+    if [[ ! -r "$CHANGELOG_FILE" ]]; then
+      echo "[update_changelog] ERROR: Existing changelog file is not readable." >&2
+      return 1
+    fi
     # Show the first few lines of the existing changelog
     echo "[update_changelog] First few lines of existing changelog:" >&2
     head -n 3 "$CHANGELOG_FILE" >&2
@@ -395,58 +412,30 @@ update_changelog() {
 
   echo "[update_changelog] Target changelog file: $CHANGELOG_FILE" >&2
 
-  local lock_file="${CHANGELOG_FILE}.lock"
-  echo "[update_changelog] Attempting to acquire lock: $lock_file" >&2
-  if ! mkdir "$lock_file" 2>/dev/null; then
-    echo "[update_changelog] Lock exists. Waiting..." >&2
-    local max_wait=30
-    local wait_count=0
-    while [ $wait_count -lt $max_wait ] && ! mkdir "$lock_file" 2>/dev/null; do
-      sleep 1
-      wait_count=$((wait_count + 1))
-      echo "[update_changelog] Waiting for lock... ($wait_count/$max_wait)" >&2
-    done
-    
-    if ! mkdir "$lock_file" 2>/dev/null; then 
-      if [ -d "$lock_file" ] && [ "$(( $(date +%s) - $(stat -c %Y "$lock_file") ))" -gt 300 ]; then
-        echo "[update_changelog] Stale lock detected (older than 5 minutes). Removing and acquiring." >&2
-        rm -rf "$lock_file"
-        if ! mkdir "$lock_file"; then
-           echo "[update_changelog] Error: Failed to acquire lock even after removing stale one for $file." >&2
-           return 1
-        fi
-      else
-        echo "[update_changelog] Error: Cannot acquire changelog lock for $file after waiting. Skipping changelog update." >&2
-        return 1
-      fi
+  # Use direct file append instead of complex locking which might be causing issues
+  echo "$entry" >> "$CHANGELOG_FILE" || {
+    echo "[update_changelog] ERROR: Failed to append to $CHANGELOG_FILE" >&2
+    return 1
+  }
+  
+  # Verify that entry was added
+  if ! grep -q "$commit_hash_to_log.*$version" "$CHANGELOG_FILE"; then
+    echo "[update_changelog] ERROR: Entry verification failed. The entry does not appear to have been added to $CHANGELOG_FILE" >&2
+    # Try once more with direct write
+    echo "$entry" >> "$CHANGELOG_FILE"
+    # Check again
+    if ! grep -q "$commit_hash_to_log.*$version" "$CHANGELOG_FILE"; then
+      echo "[update_changelog] ERROR: Second attempt to add entry failed. Changelog may be corrupted." >&2
+      return 1
+    else
+      echo "[update_changelog] Second attempt succeeded. Entry has been added." >&2
     fi
-  fi
-  echo "[update_changelog] Lock acquired: $lock_file" >&2
-  
-  # Set trap with logging
-  trap 'echo "[update_changelog] EXIT trap removing lock: $lock_file for $file" >&2; rm -rf "$lock_file"' EXIT
-
-  local temp_changelog_file
-  temp_changelog_file=$(mktemp)
-  if [[ $? -ne 0 ]] || [[ -z "$temp_changelog_file" ]]; then
-      echo "[update_changelog] Error: Failed to create temp file for changelog update." >&2
-      rm -rf "$lock_file"; trap - EXIT; return 1;
-  fi
-  echo "[update_changelog] Created temp file for changelog: $temp_changelog_file" >&2
-
-  cat "$CHANGELOG_FILE" > "$temp_changelog_file"
-  echo "$entry" >> "$temp_changelog_file"
-  
-  echo "[update_changelog] Moving $temp_changelog_file to $CHANGELOG_FILE" >&2
-  if ! mv "$temp_changelog_file" "$CHANGELOG_FILE"; then
-      echo "[update_changelog] Error: Failed to move temp file to $CHANGELOG_FILE. Original temp file: $temp_changelog_file (not deleted)." >&2
-      rm -rf "$lock_file"; trap - EXIT; return 1;
   fi
   
   # Make sure changelog is readable and not empty
   if [[ ! -r "$CHANGELOG_FILE" ]]; then
     echo "[update_changelog] ERROR: Changelog file not readable after update: $CHANGELOG_FILE" >&2
-    rm -rf "$lock_file"; trap - EXIT; return 1;
+    return 1
   fi
   
   local line_count
@@ -462,14 +451,13 @@ update_changelog() {
   
   echo "[update_changelog] Successfully added entry to changelog for $basename (version $version)" >&2
   
-  rm -rf "$lock_file"
-  trap - EXIT # Clear the trap for this specific execution
-  echo "[update_changelog] Lock released, trap cleared for $file." >&2
-  
   # Dump the entire changelog file to help with debugging
   echo "[update_changelog] Full changelog content:" >&2
   cat "$CHANGELOG_FILE" >&2
   echo "[update_changelog] End of changelog content" >&2
+  
+  # Ensure file permissions allow reading by all
+  chmod 644 "$CHANGELOG_FILE" || echo "[update_changelog] Warning: could not set permissions on changelog file" >&2
   
   return 0
 }
@@ -531,9 +519,17 @@ generate_github_step_summary() {
 # Main flow
 main() {
   echo "[main] Starting script execution." >&2
-  detect_changed_files # This function should set CHANGED_FILES env var or script var
   
-  if [[ -z "$CHANGED_FILES" ]]; then # Check env var set by workflow or by script's detect_changed_files
+  # Check if CHANGED_FILES is already set from the environment
+  if [[ -z "$CHANGED_FILES" ]]; then
+    # If not set, run detect_changed_files to set it
+    detect_changed_files
+  else
+    echo "[main] Using CHANGED_FILES from environment: $CHANGED_FILES" >&2
+  fi
+  
+  # Verify once more that we have files to process
+  if [[ -z "$CHANGED_FILES" ]]; then
     echo "[main] No files to process (CHANGED_FILES is empty). Exiting." >&2
     exit 0
   fi
