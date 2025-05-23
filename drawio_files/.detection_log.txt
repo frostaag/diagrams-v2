@@ -1,10 +1,8 @@
-=== File Detection Log Fri May 23 08:45:40 UTC 2025 ===
-[detect_changed_files] Created temporary file: /tmp/tmp.pI6u6k0WQ3
+=== File Detection Log Fri May 23 08:54:01 UTC 2025 ===
+[detect_changed_files] Created temporary file: /tmp/tmp.Tj65npcXvH
 [detect_changed_files] Trying to detect changed files using git diff...
 [detect_changed_files] Method 1 results:
-[detect_changed_files] No files found with git diff/diff-tree, trying direct filesystem search...
-[detect_changed_files] Method 3 results:
-drawio_files/25.drawio
-[detect_changed_files] Found changed files: drawio_files/25.drawio 
-[detect_changed_files] Final changed_files: drawio_files/25.drawio 
+drawio_files/1.drawio
+[detect_changed_files] Found changed files: drawio_files/1.drawio 
+[detect_changed_files] Final changed_files: drawio_files/1.drawio 
 [detect_changed_files] File detection complete.
