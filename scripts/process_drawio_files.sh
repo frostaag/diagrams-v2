@@ -196,6 +196,7 @@ extract_id() {
 # Function to convert drawio to PNG
 convert_to_png() {
   local input_file="$1"
+<<<<<<< HEAD
   # Check if the file exists and is a valid drawio file
   if [[ ! -f "$input_file" ]]; then
     echo "ERROR: Input file '$input_file' does not exist" >&2
@@ -228,6 +229,24 @@ convert_to_png() {
   echo "[convert_to_png] Converting $input_file to PNG..." >&2
   echo "[convert_to_png] Output file: $output_png" >&2
   echo "[convert_to_png] Scale: $PNG_SCALE, Quality: $PNG_QUALITY" >&2
+=======
+  
+  # Handle files with or without .drawio extension
+  if [[ "$input_file" == *.drawio ]]; then
+    local basename=$(basename "$input_file" .drawio)
+  else
+    local basename=$(basename "$input_file")
+  fi
+  
+  local output_png="${PNG_FILES_DIR}/${basename}.png"
+  
+  # Make sure the output directory exists
+  mkdir -p "$(dirname "$output_png")"
+  
+  echo "Converting $input_file to PNG..."
+  echo "Output file: $output_png"
+  echo "Scale: $PNG_SCALE, Quality: $PNG_QUALITY"
+>>>>>>> a674433 (Refactor code structure for improved readability and maintainability)
   
   # Create a temporary conversion script for better error handling
   local converter_script=$(mktemp)
@@ -275,10 +294,35 @@ convert_to_png() {
   echo "  echo \"❌ Method 3 (basic command) failed with exit code \$?\"" >> "$converter_script"
   echo "fi" >> "$converter_script"
   echo "" >> "$converter_script"
+<<<<<<< HEAD
   
+=======
+  echo "# Method 3: Try with basic export command" >> "$converter_script"
+  echo "if drawio --export --format png --scale \"\$scale\" --output \"\$output_file\" \"\$input_file\"; then" >> "$converter_script"
+  echo "  echo \"✅ Method 3 (basic export) successful\"" >> "$converter_script"
+  echo "  exit 0" >> "$converter_script"
+  echo "else" >> "$converter_script"
+  echo "  echo \"❌ Method 3 (basic export) failed with exit code \$?\"" >> "$converter_script"
+  echo "fi" >> "$converter_script"
+  echo "" >> "$converter_script"
+  echo "# Method 4: Try with headless mode and no xvfb" >> "$converter_script"
+  echo "if drawio --no-sandbox --headless --export --format png --scale \"\$scale\" --output \"\$output_file\" \"\$input_file\"; then" >> "$converter_script"
+  echo "  echo \"✅ Method 4 (headless no-sandbox) successful\"" >> "$converter_script"
+  echo "  exit 0" >> "$converter_script"
+  echo "else" >> "$converter_script"
+  echo "  echo \"❌ Method 4 (headless no-sandbox) failed with exit code \$?\"" >> "$converter_script"
+  echo "fi" >> "$converter_script"
+  echo "" >> "$converter_script"
+>>>>>>> a674433 (Refactor code structure for improved readability and maintainability)
   echo "# All conversion methods failed" >> "$converter_script"
   echo "exit 1" >> "$converter_script"
   chmod +x "$converter_script"
+  
+  # First check if input file exists
+  if [[ ! -f "$input_file" ]]; then
+    echo "Error: Input file '$input_file' does not exist!"
+    return 1
+  fi
   
   # Execute the converter script
   echo "[convert_to_png] Executing conversion script..." >&2
@@ -315,6 +359,7 @@ convert_to_png() {
     local exit_code=$?
     echo "[convert_to_png] ✗ Conversion failed with exit code $exit_code" >&2
     
+<<<<<<< HEAD
     # Try multiple fallback approaches
     echo "[convert_to_png] Attempting fallback conversions..." >&2
     
@@ -370,6 +415,17 @@ convert_to_png() {
     
     # If all conversion methods failed, create a placeholder PNG
     echo "[convert_to_png] All conversion methods failed, creating placeholder" >&2
+=======
+    # Try a direct conversion as a last resort
+    echo "Attempting direct conversion as fallback..."
+    if xvfb-run --auto-servernum drawio --export --format png --output "$output_png" "$input_file" 2>/dev/null; then
+      echo "Fallback conversion successful!"
+      rm -f "$converter_script"
+      return 0
+    fi
+    
+    # If conversion failed, create a placeholder PNG
+>>>>>>> a674433 (Refactor code structure for improved readability and maintainability)
     create_placeholder_png "$input_file" "$output_png"
     
     rm -f "$converter_script"
@@ -724,6 +780,7 @@ update_changelog() {
   else
     echo "[update_changelog] Appending to existing changelog at $CHANGELOG_FILE" >&2
     
+<<<<<<< HEAD
     # Verify the file is valid and has a header
     if [[ ! -s "$CHANGELOG_FILE" ]]; then
       echo "[update_changelog] WARNING: Changelog file exists but is empty. Adding header and entry." >&2
@@ -767,6 +824,27 @@ update_changelog() {
         }
         
         echo "[update_changelog] Successfully added entry to existing changelog" >&2
+=======
+    # Create a backup of the current changelog
+    cp "$CHANGELOG_FILE" "$CHANGELOG_FILE.bak" 2>/dev/null
+    
+    # Check if the file has a header
+    if ! grep -q "Date,Time,Diagram" "$CHANGELOG_FILE"; then
+      # If no header found, create a new file with header and entry
+      {
+        echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name"
+        echo "$entry"
+      } > "$CHANGELOG_FILE.tmp" && mv "$CHANGELOG_FILE.tmp" "$CHANGELOG_FILE"
+    else
+      # Append the new entry with error handling
+      if ! echo "$entry" >> "$CHANGELOG_FILE"; then
+        echo "[update_changelog] ERROR: Failed to append to changelog file" >&2
+        if [[ -f "$CHANGELOG_FILE.bak" ]]; then
+          mv "$CHANGELOG_FILE.bak" "$CHANGELOG_FILE" 2>/dev/null
+          echo "[update_changelog] Restored changelog from backup" >&2
+        fi
+        return 1
+>>>>>>> a674433 (Refactor code structure for improved readability and maintainability)
       fi
     fi
   fi

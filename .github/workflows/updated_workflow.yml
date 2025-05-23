@@ -92,6 +92,7 @@ jobs:
           mkdir -p ./drawio_files
           echo "Output directories ensured."
 
+<<<<<<< HEAD
       # We're not creating test diagrams anymore
       - name: Check for Existing Diagrams
         shell: bash
@@ -107,6 +108,32 @@ jobs:
           else
             echo "No drawio files found in the repository."
           fi
+=======
+      - name: Check for Existing Diagrams
+        shell: bash
+        run: |
+          echo "Checking existing diagrams to process..."
+          
+          # Instead of creating test files, use existing files in the repository
+          EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | head -n 5 | tr '\n' ' ')
+          
+          # Also check for files without extension
+          NON_EXTENSION_FILES=$(find drawio_files -type f -not -name "*.*" ! -path "*/.*" | head -n 2 | tr '\n' ' ')
+          
+          if [ -n "$EXISTING_FILES" ] || [ -n "$NON_EXTENSION_FILES" ]; then
+            CHANGED_FILES="$EXISTING_FILES $NON_EXTENSION_FILES"
+            echo "Found existing files to process: $CHANGED_FILES"
+          else
+            echo "No existing files found. Creating a placeholder."
+            PLACEHOLDER="drawio_files/placeholder.drawio"
+            echo '<mxfile><diagram name="Placeholder">dZHBDoMgDIafhrtC5uLcnJs7efBMRCZkKGhYts3HTwXmkm1JL037f/1pKcQ0b/ea1cWBOSghfVcUYiZk6McpySiDCvcKVkVFcW3jPT4vuHgBwkmIbYu9UxL8IGuUDiOTDDkIe2Bju4SM+UOw3EF6ngQ7vSLbIukzznboLJhlzonekqklOct5qQM/rTl9Cdtdpzt7modNwLwo+hX88B6Ulu37BfkH</diagram></mxfile>' > "$PLACEHOLDER"
+            CHANGED_FILES="$PLACEHOLDER"
+            echo "Created placeholder: $CHANGED_FILES"
+          fi
+          
+          echo "Setting CHANGED_FILES to process"
+          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
+>>>>>>> a674433 (Refactor code structure for improved readability and maintainability)
 
       - name: Process Draw.io files
         id: process_files
@@ -198,7 +225,8 @@ jobs:
           
           # Execute main processing script with explicit output capture
           echo "=== Begin Processing Script Execution ==="
-          bash ./scripts/process_drawio_files.sh
+          # Use the fixed script instead of the original
+          bash ./scripts/fixed_process_drawio_files.sh
           SCRIPT_EXIT_CODE=$?
           echo "Processing script completed with exit code: $SCRIPT_EXIT_CODE"
           echo "=== End Processing Script Execution ==="
