@@ -125,15 +125,21 @@ jobs:
               echo "Converting $file to $PNG_OUTPUT"
               
               # Run drawio with explicit output path
-          # Run drawio with sandbox and GPU flags first
-          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio --no-sandbox --disable-gpu -x -f png \
-            --scale ${{ env.DIAGRAMS_PNG_SCALE }} \
-            --quality ${{ env.DIAGRAMS_PNG_QUALITY }} \
-            -o "$PNG_OUTPUT" "$file" || {
-                    ERROR_CODE=$?
-                    echo "::error::Failed to convert $file to PNG (Error: $ERROR_CODE)"
-                    continue
-                }
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" \
+            drawio \
+            --no-sandbox \
+            --disable-gpu \
+            -x \
+            -f png \
+            --crop \
+            --scale 2 \
+            -o "$PNG_OUTPUT" \
+            "$file" || {
+              ERROR_CODE=$?
+              echo "::error::Failed to convert $file to PNG (Error: $ERROR_CODE)"
+              touch "$PNG_OUTPUT.error"
+              continue
+            }
               
               if [ -f "$PNG_OUTPUT" ]; then
                 echo "✅ Successfully created $PNG_OUTPUT"
