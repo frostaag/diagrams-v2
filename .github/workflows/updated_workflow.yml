@@ -19,51 +19,132 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history for file change detection
 
       - name: Install dependencies and draw.io
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb chromium-browser wget
+          sudo apt-get install -y xvfb chromium-browser wget imagemagick wkhtmltopdf
           
           # Install DrawIO
           wget -O drawio.deb https://github.com/jgraph/drawio-desktop/releases/download/v20.8.16/drawio-amd64-20.8.16.deb
           sudo dpkg -i drawio.deb || sudo apt-get -f install -y
           rm drawio.deb
+          
+          # Make all scripts executable
+          chmod +x ./scripts/fixed_process_drawio_files.sh
+          chmod +x ./scripts/simple_batch_convert.sh
+          chmod +x ./scripts/convert_drawio_to_png.sh
 
-      - name: Convert draw.io files to PNG
+      - name: Approach 1 - Use fixed_process_drawio_files.sh (Most robust)
+        id: approach_1
+        continue-on-error: true
         run: |
+          echo "⏳ Attempting conversion using Approach 1 (fixed_process_drawio_files.sh)..."
+          
+          # Export specific file environment variable if provided
+          if [ -n "${{ github.event.inputs.specific_file }}" ]; then
+            export SPECIFIC_FILE="${{ github.event.inputs.specific_file }}"
+          fi
+          
+          # Run the fixed script
+          ./scripts/fixed_process_drawio_files.sh
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          PNG_SCALE: "2.0"
+          PNG_QUALITY: "100"
+      
+      - name: Check conversion results for Approach 1
+        id: check_approach_1
+        run: |
+          # Count drawio files
+          DRAWIO_FILES=$(find drawio_files -name "*.drawio" | wc -l)
+          
+          # Count png files
+          PNG_FILES=$(find png_files -name "*.png" | wc -l)
+          
+          echo "Found $DRAWIO_FILES drawio files and $PNG_FILES png files"
+          
+          # If we have at least as many PNGs as drawio files, conversion was successful
+          if [ "$PNG_FILES" -ge "$DRAWIO_FILES" ]; then
+            echo "✅ Approach 1 successfully converted all files"
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Approach 1 did not convert all files, trying next approach"
+            echo "success=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Approach 2 - Use simple_batch_convert.sh (Simplified)
+        id: approach_2
+        if: steps.check_approach_1.outputs.success != 'true'
+        continue-on-error: true
+        run: |
+          echo "⏳ Attempting conversion using Approach 2 (simple_batch_convert.sh)..."
+          
+          # Run the simple batch converter
+          ./scripts/simple_batch_convert.sh
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          PNG_SCALE: "2.0"
+          PNG_QUALITY: "100"
+
+      - name: Check conversion results for Approach 2
+        id: check_approach_2
+        if: steps.check_approach_1.outputs.success != 'true'
+        run: |
+          # Count drawio files
+          DRAWIO_FILES=$(find drawio_files -name "*.drawio" | wc -l)
+          
+          # Count png files
+          PNG_FILES=$(find png_files -name "*.png" | wc -l)
+          
+          echo "Found $DRAWIO_FILES drawio files and $PNG_FILES png files"
+          
+          # If we have at least as many PNGs as drawio files, conversion was successful
+          if [ "$PNG_FILES" -ge "$DRAWIO_FILES" ]; then
+            echo "✅ Approach 2 successfully converted all files"
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Approach 2 did not convert all files, trying next approach"
+            echo "success=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Approach 3 - Individual file conversion (Last resort)
+        if: steps.check_approach_1.outputs.success != 'true' && steps.check_approach_2.outputs.success != 'true'
+        run: |
+          echo "⏳ Attempting conversion using Approach 3 (individual file conversion)..."
+          
+          # Create output directory
           mkdir -p png_files
           
-          for file in drawio_files/*.drawio; do
-            if [ -f "$file" ]; then
-              echo "Converting $file..."
-              PNG_OUTPUT="png_files/$(basename "${file%.drawio}.png")"
-              
-              xvfb-run -a drawio \
-                --no-sandbox \
-                --disable-gpu \
-                -x \
-                -f png \
-                -s 2 \
-                -o "$PNG_OUTPUT" \
-                "$file"
-              
-              if [ -f "$PNG_OUTPUT" ]; then
-                echo "Successfully created $PNG_OUTPUT"
-                
-                # Add to changelog
-                CURRENT_DATE=$(date +"%d.%m.%Y")
-                CURRENT_TIME=$(date +"%H:%M:%S")
-                FILE_NAME=$(basename "$file" .drawio)
-                
-                if [ ! -f "png_files/CHANGELOG.csv" ]; then
-                  echo "Date,Time,File Name,PNG Output,Commit Hash" > "png_files/CHANGELOG.csv"
-                fi
-                
-                echo "$CURRENT_DATE,$CURRENT_TIME,$FILE_NAME,$(basename "$PNG_OUTPUT"),${{ github.sha }}" >> "png_files/CHANGELOG.csv"
-              else
-                echo "Failed to create $PNG_OUTPUT"
+          # Process all drawio files or specific file if provided
+          if [ -n "${{ github.event.inputs.specific_file }}" ]; then
+            # Process specific file
+            ./scripts/convert_drawio_to_png.sh "${{ github.event.inputs.specific_file }}" "png_files/$(basename "${{ github.event.inputs.specific_file }}" .drawio).png" 2.0 100
+          else
+            # Process all drawio files
+            for file in drawio_files/*.drawio; do
+              if [ -f "$file" ]; then
+                echo "Processing $file"
+                output_file="png_files/$(basename "$file" .drawio).png"
+                ./scripts/convert_drawio_to_png.sh "$file" "$output_file" 2.0 100 || echo "Failed to convert $file"
               fi
+            done
+          fi
+          
+          # Ensure changelog exists
+          if [ ! -f "png_files/CHANGELOG.csv" ]; then
+            echo "Date,Time,File Name,PNG Output,Commit Hash" > "png_files/CHANGELOG.csv"
+          fi
+          
+          # Update changelog for all successfully converted files
+          for png_file in png_files/*.png; do
+            if [ -f "$png_file" ]; then
+              basename=$(basename "$png_file" .png)
+              CURRENT_DATE=$(date +"%d.%m.%Y")
+              CURRENT_TIME=$(date +"%H:%M:%S")
+              echo "$CURRENT_DATE,$CURRENT_TIME,$basename,$(basename "$png_file"),${{ github.sha }}" >> "png_files/CHANGELOG.csv"
             fi
           done
 
