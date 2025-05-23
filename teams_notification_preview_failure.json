@@ -1,0 +1,75 @@
+{
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "themeColor": "FF0000",
+    "summary": "Draw.io Processing - Failure",
+    "sections": [
+        {
+            "activityTitle": "❌ Draw.io Processing - Failure",
+            "activitySubtitle": "Processing completed at 2025-05-23 14:57:45",
+            "activityImage": "https://raw.githubusercontent.com/jgraph/drawio-desktop/master/build/icon.png",
+            "facts": [
+                {
+                    "name": "Repository",
+                    "value": "diagrams-v2"
+                },
+                {
+                    "name": "Status",
+                    "value": "Failure"
+                },
+                {
+                    "name": "Draw.io Files",
+                    "value": "24"
+                },
+                {
+                    "name": "PNG Files Generated",
+                    "value": "15"
+                },
+                {
+                    "name": "Conversion Rate",
+                    "value": "62%"
+                },
+                {
+                    "name": "Changelog Entries",
+                    "value": "15"
+                }
+            ],
+            "markdown": true
+        },
+        {
+            "title": "Commit Information",
+            "facts": [
+                {
+                    "name": "Commit Hash",
+                    "value": "[7154985](https://github.com/yourusername/diagrams-v2/commit/71549859f19ee06be17855cd7a2004b74ac54c29)"
+                },
+                {
+                    "name": "Workflow",
+                    "value": "Draw.io Files Processing"
+                }
+            ]
+        }
+    ],
+    "potentialAction": [
+        {
+            "@type": "OpenUri",
+            "name": "View Workflow Run",
+            "targets": [
+                {
+                    "os": "default",
+                    "uri": "https://github.com/yourusername/diagrams-v2/actions/runs/1234567890"
+                }
+            ]
+        },
+        {
+            "@type": "OpenUri",
+            "name": "View Repository",
+            "targets": [
+                {
+                    "os": "default",
+                    "uri": "https://github.com/yourusername/diagrams-v2"
+                }
+            ]
+        }
+    ]
+}
