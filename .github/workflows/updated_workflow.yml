@@ -156,3 +156,42 @@ jobs:
           git add png_files/
           git commit -m "Update PNG files and changelog" || echo "No changes to commit"
           git push
+          
+      - name: Send Teams Notification
+        if: always()  # Run this step regardless of previous steps success/failure
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Count processed files for notification content
+          DRAWIO_FILES=$(find drawio_files -name "*.drawio" | wc -l)
+          PNG_FILES=$(find png_files -name "*.png" | wc -l)
+          
+          # Set notification color based on success/failure
+          if [ "$PNG_FILES" -lt "$DRAWIO_FILES" ]; then
+            COLOR="FF0000"  # Red for failure
+            TITLE="⚠️ Draw.io Processing - Some Files Failed Conversion"
+            OUTCOME="Partial success"
+            MESSAGE="Processed $DRAWIO_FILES draw.io files, but only converted $PNG_FILES to PNG format. Check logs for errors."
+          else
+            COLOR="00FF00"  # Green for success
+            TITLE="✅ Draw.io Processing - Success"
+            OUTCOME="Success"
+            MESSAGE="Successfully processed $DRAWIO_FILES draw.io files and converted $PNG_FILES to PNG format."
+          fi
+          
+          # Generate a summary to include in notification
+          SUMMARY="$(cat png_files/CHANGELOG.csv | wc -l) entries in CHANGELOG.csv"
+          
+          # Send the notification
+          ./scripts/send_teams_notification.sh \
+            "$TEAMS_WEBHOOK_URL" \
+            "$TITLE" \
+            "Workflow completed with $OUTCOME - $SUMMARY" \
+            "$MESSAGE" \
+            "$COLOR" \
+            "$REPOSITORY" \
+            "${{ github.sha }}" \
+            "Draw.io Files Processing" \
+            "$RUN_ID"

@@ -564,7 +564,8 @@ update_changelog() {
   
   # Prepare the changelog entry according to the specification
   local escaped_action="${action//\"/\"\"}"
-  local entry="$current_date,$current_time,\"$escaped_filename_without_ext\",\"$escaped_file\",\"$escaped_action\",\"$escaped_commit_msg\",$version,$commit_hash_to_log,\"$escaped_author_name\""
+  # Format entry according to required format: Date,Time,Diagram ID,Diagram Name,File Path,Action,Commit Message,Version,Commit Hash,Author Name
+  local entry="$current_date,$current_time,\"$escaped_filename_without_ext\",\"$escaped_filename_without_ext\",\"$escaped_file\",\"$escaped_action\",\"$escaped_commit_msg\",$version,$commit_hash_to_log,\"$escaped_author_name\""
   echo "[update_changelog] New changelog entry: $entry" >&2
   
   # Create or update the changelog file with proper error handling
@@ -572,7 +573,7 @@ update_changelog() {
     echo "[update_changelog] Creating new changelog file at $CHANGELOG_FILE" >&2
     
     {
-      echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name"
+      echo "Date,Time,Diagram ID,Diagram Name,File Path,Action,Commit Message,Version,Commit Hash,Author Name"
       echo "$entry"
     } > "$CHANGELOG_FILE.tmp"
     
@@ -590,7 +591,7 @@ update_changelog() {
     if ! grep -q "Date,Time,Diagram" "$CHANGELOG_FILE"; then
       # If no header found, create a new file with header and entry
       {
-        echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name"
+        echo "Date,Time,Diagram ID,Diagram Name,File Path,Action,Commit Message,Version,Commit Hash,Author Name"
         echo "$entry"
       } > "$CHANGELOG_FILE.tmp" && mv "$CHANGELOG_FILE.tmp" "$CHANGELOG_FILE"
     else

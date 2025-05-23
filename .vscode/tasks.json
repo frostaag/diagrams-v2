@@ -1,0 +1,13 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Test Draw.io Processing Workflow",
+			"type": "shell",
+			"command": "cd /Users/lucasdreger/apps/diagrams-v2 && git status && echo 'Updated workflow ready to test' && echo 'You can now commit the changes and run the workflow'",
+			"problemMatcher": [],
+			"group": "test",
+			"isBackground": false
+		}
+	]
+}
