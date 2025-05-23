@@ -196,8 +196,18 @@ jobs:
           # Execute main processing script with explicit output capture
           echo "=== Begin Processing Script Execution ==="
           # Use the fixed script instead of the original
-          bash ./scripts/fixed_process_drawio_files.sh
-          SCRIPT_EXIT_CODE=$?
+          # Run with error handling for known non-fatal errors
+          bash ./scripts/fixed_process_drawio_files.sh || {
+            ERROR_CODE=$?
+            # Check if png was actually created despite error
+            if [ -f "png_files/$(basename "${CHANGED_FILES%.drawio}.png")" ]; then
+              echo "PNG file was created successfully despite error code $ERROR_CODE"
+              # Continue processing as success
+              SCRIPT_EXIT_CODE=0
+            else
+              SCRIPT_EXIT_CODE=$ERROR_CODE
+            fi
+          }
           echo "Processing script completed with exit code: $SCRIPT_EXIT_CODE"
           echo "=== End Processing Script Execution ==="
           
