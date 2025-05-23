@@ -67,10 +67,10 @@ jobs:
           done
           if [ "$DOWNLOAD_SUCCESS" != "true" ]; then echo "::error::Failed to download DrawIO"; exit 1; fi
           sudo apt-get install -y ./drawio-amd64-${{ env.DIAGRAMS_DRAWIO_VERSION }}.deb
-          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio --version || echo "Cannot determine version"
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio --no-sandbox --disable-gpu --version || echo "Cannot determine version"
           echo "<mxfile><diagram name='Test'>dZHBDoMgDIafhrtC5uLcnJs7efBMRCZkKGhYts3HTwXmkm1JL037f/1pKcQ0b/ea1cWBOSghfVcUYiZk6McpySiDCvcKVkVFcW3jPT4vuHgBwkmIbYu9UxL8IGuUDiOTDDkIe2Bju4SM+UOw3EF6ngQ7vSLbIukzznboLJhlzonekqklOct5qQM/rTl9Cdtdpzt7modNwLwo+hX88B6Ulu37BfkH</diagram></mxfile>" > /tmp/test.drawio
           mkdir -p /tmp/output
-          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio -x -f png --scale ${{ env.DIAGRAMS_PNG_SCALE }} --quality ${{ env.DIAGRAMS_PNG_QUALITY }} -o /tmp/output/test.png /tmp/test.drawio && echo "DrawIO test OK" || echo "DrawIO test FAILED"
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio --no-sandbox --disable-gpu -x -f png --scale ${{ env.DIAGRAMS_PNG_SCALE }} --quality ${{ env.DIAGRAMS_PNG_QUALITY }} -o /tmp/output/test.png /tmp/test.drawio && echo "DrawIO test OK" || echo "DrawIO test FAILED"
 
       - name: Create output directories
         run: |
@@ -202,7 +202,7 @@ jobs:
               echo "Converting $file to $PNG_OUTPUT"
               
               # Run drawio with explicit output path
-          # Add no-sandbox and disable-gpu flags to avoid GPU/DBus issues
+          # Run drawio with sandbox and GPU flags first
           xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio --no-sandbox --disable-gpu -x -f png \
             --scale ${{ env.DIAGRAMS_PNG_SCALE }} \
             --quality ${{ env.DIAGRAMS_PNG_QUALITY }} \
