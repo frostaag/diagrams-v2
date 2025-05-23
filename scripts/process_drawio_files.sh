@@ -345,87 +345,156 @@ determine_version() {
 # Function to update changelog
 update_changelog() {
   local file="$1" 
-  echo "[update_changelog] Called for file: $file" >&2
+  echo "[update_changelog] Starting changelog update for file: $file" >&2
   echo "[update_changelog] Working directory: $(pwd)" >&2
   
-  # Make sure files are where we think they should be
-  echo "[update_changelog] Directory contents before processing:" >&2
-  ls -la "$(dirname "$CHANGELOG_FILE")" 2>/dev/null || echo "[update_changelog] Directory doesn't exist yet" >&2
+  # Debug information about the environment
+  echo "[update_changelog] CHANGELOG_FILE path: $CHANGELOG_FILE" >&2
+  echo "[update_changelog] Environment variables: GITHUB_SHA=$GITHUB_SHA, TRIGGERING_SHA=$TRIGGERING_SHA" >&2
+  
+  # Make sure file parameter is valid
+  if [[ ! -f "$file" ]]; then
+    echo "[update_changelog] ERROR: Input file '$file' does not exist" >&2
+    return 1
+  fi
+  
+  # Create the output directory if it doesn't exist
+  if ! mkdir -p "$(dirname "$CHANGELOG_FILE")"; then
+    echo "[update_changelog] ERROR: Failed to create directory for changelog at '$(dirname "$CHANGELOG_FILE")'" >&2
+    return 1
+  fi
+  
+  # Show the directory structure before proceeding
+  echo "[update_changelog] Directory structure before update:" >&2
+  find "$(dirname "$CHANGELOG_FILE")" -type f -o -type d | sort >&2
   
   local basename
   basename=$(basename "$file")
   local filename_without_ext="${basename%.drawio}"
   
-  # Get commit information 
-  local commit_hash_to_log="$(git log -1 --format="%h")"
-  local commit_msg_to_log="$(git log -1 --format="%s")"
-  local author_name_to_log="$(git log -1 --format="%an")"
+  # Get commit information with explicit error handling
+  local commit_hash_to_log=""
+  local commit_msg_to_log=""
+  local author_name_to_log=""
+  
+  commit_hash_to_log=$(git log -1 --format="%h" -- "$file" 2>/dev/null)
+  if [[ -z "$commit_hash_to_log" ]]; then
+    echo "[update_changelog] Warning: Could not get commit hash for $file. Using latest commit hash." >&2
+    commit_hash_to_log=$(git log -1 --format="%h" 2>/dev/null || echo "unknown")
+  fi
+  
+  commit_msg_to_log=$(git log -1 --format="%s" -- "$file" 2>/dev/null)
+  if [[ -z "$commit_msg_to_log" ]]; then
+    echo "[update_changelog] Warning: Could not get commit message for $file. Using latest commit message." >&2
+    commit_msg_to_log=$(git log -1 --format="%s" 2>/dev/null || echo "Diagram update")
+  fi
+  
+  author_name_to_log=$(git log -1 --format="%an" -- "$file" 2>/dev/null)
+  if [[ -z "$author_name_to_log" ]]; then
+    echo "[update_changelog] Warning: Could not get author name for $file. Using latest commit author." >&2
+    author_name_to_log=$(git log -1 --format="%an" 2>/dev/null || echo "Unknown Author")
+  fi
   
   echo "[update_changelog] Commit info: hash=$commit_hash_to_log, author=$author_name_to_log, msg=$commit_msg_to_log" >&2
   
-  # Get current date and time
+  # Format date and time according to specification (DD.MM.YYYY and HH:MM:SS)
   local current_date=$(date +"%d.%m.%Y")
   local current_time=$(date +"%H:%M:%S")
   
-  # Get version
-  echo "[update_changelog] Attempting to determine version for $file..." >&2
-  local version_output
-  version_output=$(determine_version "$file")
-  local determine_version_exit_code=$?
-
-  if [[ $determine_version_exit_code -ne 0 ]] || [[ -z "$version_output" ]]; then
-      echo "[update_changelog] Error: determine_version failed for $file or returned empty. Exit code: $determine_version_exit_code. Using default version 1.0." >&2
-      version_output="1.0"
+  # Get version with detailed logging
+  echo "[update_changelog] Getting version for $file..." >&2
+  local version="1.0" # Default version if determination fails
+  
+  # Only call determine_version if the function exists
+  if declare -f determine_version > /dev/null; then
+    local version_output=""
+    version_output=$(determine_version "$file" 2>&1)
+    local determine_version_exit_code=$?
+    
+    if [[ $determine_version_exit_code -eq 0 ]] && [[ -n "$version_output" ]]; then
+      # Extract only the last line which should be the version number
+      version=$(echo "$version_output" | tail -n 1)
+      echo "[update_changelog] Successfully determined version: $version" >&2
+    else
+      echo "[update_changelog] Warning: determine_version failed or returned empty. Using default version 1.0." >&2
+      echo "[update_changelog] determine_version output: $version_output" >&2
+    fi
+  else
+    echo "[update_changelog] Warning: determine_version function not found. Using default version 1.0." >&2
   fi
-  local version="$version_output"
-  echo "[update_changelog] Version determined for $file: $version" >&2
   
-  # Prepare the changelog entry
-  local entry="$current_date,$current_time,\"$filename_without_ext\",\"$file\",\"Converted to PNG\",\"$commit_msg_to_log\",$version,$commit_hash_to_log,\"$author_name_to_log\""
-  echo "[update_changelog] Changelog entry to be added: $entry" >&2
+  # Properly escape fields for CSV
+  # Replace double quotes within fields with two double quotes (CSV standard)
+  local escaped_filename_without_ext="${filename_without_ext//\"/\"\"}"
+  local escaped_file="${file//\"/\"\"}"
+  local escaped_commit_msg="${commit_msg_to_log//\"/\"\"}"
+  local escaped_author_name="${author_name_to_log//\"/\"\"}"
   
-  # Ensure the output directory exists
-  mkdir -p "$(dirname "$CHANGELOG_FILE")" || {
-    echo "[update_changelog] ERROR: Failed to create directory for $CHANGELOG_FILE" >&2
-    return 1
-  }
+  # Prepare the changelog entry according to the specification
+  local entry="$current_date,$current_time,\"$escaped_filename_without_ext\",\"$escaped_file\",\"Converted to PNG\",\"$escaped_commit_msg\",$version,$commit_hash_to_log,\"$escaped_author_name\""
+  echo "[update_changelog] New changelog entry: $entry" >&2
   
-  # Create or update the changelog file - use a simpler approach to avoid potential issues
+  # Create or update the changelog file with proper error handling
   if [[ ! -f "$CHANGELOG_FILE" ]]; then
-    # Create new file with header and first entry
+    echo "[update_changelog] Creating new changelog file at $CHANGELOG_FILE" >&2
+    
     {
       echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name"
       echo "$entry"
-    } > "$CHANGELOG_FILE"
+    } > "$CHANGELOG_FILE.tmp"
     
-    # Check if file was created
-    if [[ ! -f "$CHANGELOG_FILE" ]]; then
-      echo "[update_changelog] ERROR: Failed to create $CHANGELOG_FILE" >&2
+    mv "$CHANGELOG_FILE.tmp" "$CHANGELOG_FILE" 2>/dev/null
+    if [[ $? -ne 0 || ! -f "$CHANGELOG_FILE" ]]; then
+      echo "[update_changelog] ERROR: Failed to create changelog file at $CHANGELOG_FILE" >&2
       return 1
     fi
-    echo "[update_changelog] Created new changelog with header and entry" >&2
+    
+    echo "[update_changelog] Created new changelog file with header and entry" >&2
   else
-    # Append to existing file
-    echo "$entry" >> "$CHANGELOG_FILE"
-    echo "[update_changelog] Added entry to existing changelog" >&2
+    echo "[update_changelog] Appending to existing changelog at $CHANGELOG_FILE" >&2
+    
+    # Create a backup of the current changelog
+    cp "$CHANGELOG_FILE" "$CHANGELOG_FILE.bak" 2>/dev/null
+    
+    # Append the new entry with error handling
+    if ! echo "$entry" >> "$CHANGELOG_FILE"; then
+      echo "[update_changelog] ERROR: Failed to append to changelog file" >&2
+      if [[ -f "$CHANGELOG_FILE.bak" ]]; then
+        mv "$CHANGELOG_FILE.bak" "$CHANGELOG_FILE" 2>/dev/null
+        echo "[update_changelog] Restored changelog from backup" >&2
+      fi
+      return 1
+    fi
+    
+    # Remove the backup if append was successful
+    rm -f "$CHANGELOG_FILE.bak" 2>/dev/null
+    echo "[update_changelog] Successfully added entry to existing changelog" >&2
   fi
   
-  # Verify the file exists and show content
+  # Ensure the file has appropriate permissions and ownership
+  chmod 644 "$CHANGELOG_FILE" 2>/dev/null || echo "[update_changelog] Warning: Failed to set permissions on changelog file" >&2
+  
+  # Verify the file content
   if [[ -f "$CHANGELOG_FILE" ]]; then
-    echo "[update_changelog] Changelog file exists after update. Size: $(wc -c < "$CHANGELOG_FILE") bytes" >&2
-    echo "[update_changelog] Changelog contents:" >&2
-    cat "$CHANGELOG_FILE" >&2
+    local file_size=$(wc -c < "$CHANGELOG_FILE" 2>/dev/null || echo "unknown")
+    echo "[update_changelog] Verification: changelog exists, size: ${file_size} bytes" >&2
     
-    # Ensure file has correct permissions
-    chmod 644 "$CHANGELOG_FILE"
+    # Output first and last few lines for verification (avoid printing entire file if large)
+    echo "[update_changelog] Changelog first 5 lines:" >&2
+    head -n 5 "$CHANGELOG_FILE" >&2
     
-    # Print directory after processing
-    echo "[update_changelog] Directory contents after processing:" >&2
+    local total_lines=$(wc -l < "$CHANGELOG_FILE" 2>/dev/null || echo "unknown")
+    echo "[update_changelog] Changelog has $total_lines lines total. Last 3 lines:" >&2
+    tail -n 3 "$CHANGELOG_FILE" >&2
+    
+    # Touch the file to update timestamp
+    touch "$CHANGELOG_FILE" 2>/dev/null
+    
+    # Show directory contents after update
+    echo "[update_changelog] Directory contents after update:" >&2
     ls -la "$(dirname "$CHANGELOG_FILE")" >&2
     
-    # Finally touch the file to ensure timestamp is updated
-    touch "$CHANGELOG_FILE"
-    
+    echo "[update_changelog] Changelog update completed successfully" >&2
     return 0
   else
     echo "[update_changelog] ERROR: Changelog file does not exist after update attempt" >&2
@@ -489,11 +558,27 @@ generate_github_step_summary() {
 
 # Main flow
 main() {
-  echo "[main] Starting script execution." >&2
+  echo "[main] Starting draw.io processing script execution." >&2
+  
+  # Ensure the environment variables are properly set
+  echo "[main] Checking environment variables and configuration..." >&2
+  
+  # Export all key configuration variables to ensure they are available to all functions
+  export PNG_SCALE="${DIAGRAMS_PNG_SCALE:-${PNG_SCALE:-2.0}}"
+  export PNG_QUALITY="${DIAGRAMS_PNG_QUALITY:-${PNG_QUALITY:-100}}"
+  export CHANGELOG_FILE="${DIAGRAMS_CHANGELOG_FILE:-${CHANGELOG_FILE:-${PNG_FILES_DIR}/CHANGELOG.csv}}"
+  export COUNTER_FILE="${DIAGRAMS_COUNTER_FILE:-${COUNTER_FILE:-${DRAWIO_FILES_DIR}/.counter}}"
+  export TRIGGERING_SHA="${GITHUB_SHA:-${TRIGGERING_SHA:-$(git rev-parse HEAD 2>/dev/null || echo 'unknown')}}"
+  
+  echo "[main] Using configuration: CHANGELOG_FILE=$CHANGELOG_FILE, PNG_SCALE=$PNG_SCALE, PNG_QUALITY=$PNG_QUALITY" >&2
+  
+  # Create necessary directories to ensure they exist
+  mkdir -p "$DRAWIO_FILES_DIR" "$PNG_FILES_DIR" "$(dirname "$COUNTER_FILE")" "$(dirname "$CHANGELOG_FILE")" 2>/dev/null
   
   # Check if CHANGED_FILES is already set from the environment
   if [[ -z "$CHANGED_FILES" ]]; then
     # If not set, run detect_changed_files to set it
+    echo "[main] CHANGED_FILES not set, detecting changed files..." >&2
     detect_changed_files
   else
     echo "[main] Using CHANGED_FILES from environment: $CHANGED_FILES" >&2
@@ -502,80 +587,172 @@ main() {
   # Force-export CHANGED_FILES to ensure it's accessible in all parts of the script
   export CHANGED_FILES
   
-  # Print all environment variables to help with debugging
-  echo "[main] Debug: All environment variables:" >&2
-  env | grep -v PASSWORD | grep -v SECRET | grep -v TOKEN >&2
+  # Print all environment variables to help with debugging (excluding sensitive data)
+  echo "[main] Debug: Key environment variables:" >&2
+  env | grep -E '^(CHANGED_|DIAGRAMS_|PNG_|GITHUB_)' | grep -v -E '(PASSWORD|SECRET|TOKEN)' >&2
   
-  # Verify once more that we have files to process
-  if [[ -z "$CHANGED_FILES" ]]; then
-    echo "[main] No files to process (CHANGED_FILES is empty). Exiting." >&2
-    exit 0
+  # Check if the current directory is a git repository
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "[main] Warning: Current directory is not a git repository. Limited git functionality available." >&2
   fi
-  echo "[main] Files to process based on CHANGED_FILES env var: $CHANGED_FILES" >&2
+  
+  # Show the current commit info if available
+  git_commit_info=$(git log -1 --oneline 2>/dev/null || echo "Git info not available")
+  echo "[main] Current git commit: $git_commit_info" >&2
+  
+  # Check for existing changelog file before processing
+  if [[ -f "$CHANGELOG_FILE" ]]; then
+    echo "[main] Existing changelog found at $CHANGELOG_FILE. Size: $(wc -c < "$CHANGELOG_FILE" 2>/dev/null || echo "unknown") bytes" >&2
+  else
+    echo "[main] No existing changelog found at $CHANGELOG_FILE. Will create if needed." >&2
+  fi
+  
+  # Verify we have files to process
+  if [[ -z "$CHANGED_FILES" ]]; then
+    echo "[main] No files to process (CHANGED_FILES is empty)." >&2
+    
+    # Even with no files, ensure the changelog exists with a header
+    echo "[main] Ensuring changelog file exists with header..." >&2
+    if ! mkdir -p "$(dirname "$CHANGELOG_FILE")" 2>/dev/null; then 
+      echo "[main] Error creating directory for changelog file" >&2
+    elif [[ ! -f "$CHANGELOG_FILE" ]]; then
+      echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
+      echo "[main] Created empty changelog file with header at $CHANGELOG_FILE" >&2
+      
+      # Set proper permissions
+      chmod 644 "$CHANGELOG_FILE" 2>/dev/null
+    fi
+    
+    echo "[main] No files to process. Exiting normally." >&2
+    generate_github_step_summary 0
+    return 0
+  fi
+  
+  echo "[main] Files to process based on CHANGED_FILES: $CHANGED_FILES" >&2
   
   local processed_count=0
+  local failed_count=0
   local overall_success=true 
 
   # Process each file in the CHANGED_FILES list
   for file_to_process_loopvar in $CHANGED_FILES; do
-    echo "[main] Processing file from list: '$file_to_process_loopvar'" >&2
+    echo "[main] Processing file: '$file_to_process_loopvar'" >&2
     
+    # Verify file exists
     if [[ ! -f "$file_to_process_loopvar" ]]; then
-      echo "[main] Warning: File $file_to_process_loopvar from CHANGED_FILES list does not exist, skipping." >&2
+      echo "[main] Warning: File $file_to_process_loopvar does not exist, skipping." >&2
+      ((failed_count++))
       continue
     fi
     
     local processed_file_path="$file_to_process_loopvar" # Start with the original path
     
+    echo "[main] Step 1: Assign ID if needed" >&2
     # Assign ID if needed
     local path_after_assign_ids
-    path_after_assign_ids=$(assign_ids "$file_to_process_loopvar") # Assuming assign_ids is modified to echo new path
+    path_after_assign_ids=$(assign_ids "$file_to_process_loopvar")
     local assign_ids_exit_code=$?
 
     if [[ $assign_ids_exit_code -ne 0 ]]; then
-        echo "[main] Error in assign_ids for $file_to_process_loopvar. Skipping." >&2
-        overall_success=false
-        continue
+      echo "[main] Error: ID assignment failed for $file_to_process_loopvar. Skipping file." >&2
+      overall_success=false
+      ((failed_count++))
+      continue
     fi
-    # If assign_ids didn't rename, it should echo the original path.
-    # If it did rename, it echoes the new path.
+    
+    # Update path if file was renamed during ID assignment
     processed_file_path="$path_after_assign_ids"
-    echo "[main] File path after assign_ids: $processed_file_path" >&2
+    echo "[main] File path after ID assignment: $processed_file_path" >&2
 
+    echo "[main] Step 2: Convert file to PNG" >&2
     # Convert to PNG
     if ! convert_to_png "$processed_file_path"; then
-      echo "[main] Error: Failed to convert $processed_file_path to PNG, continuing with next file." >&2
+      echo "[main] Error: PNG conversion failed for $processed_file_path." >&2
       overall_success=false
-      continue # Skip changelog for failed conversion
+      ((failed_count++))
+      
+      # Add entry to changelog even for failed conversion
+      echo "[main] Adding failed conversion entry to changelog..." >&2
+      local basename=$(basename "$processed_file_path")
+      local current_date=$(date +"%d.%m.%Y")
+      local current_time=$(date +"%H:%M:%S")
+      local commit_hash=$(git log -1 --format="%h" 2>/dev/null || echo "unknown")
+      local commit_msg=$(git log -1 --format="%s" 2>/dev/null || echo "Diagram processing")
+      local author_name=$(git log -1 --format="%an" 2>/dev/null || echo "Unknown")
+      
+      # Ensure changelog directory exists
+      mkdir -p "$(dirname "$CHANGELOG_FILE")" 2>/dev/null
+      
+      # Create or append to changelog
+      if [[ ! -f "$CHANGELOG_FILE" ]]; then
+        echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
+      fi
+      
+      echo "$current_date,$current_time,\"${basename%.drawio}\",\"$processed_file_path\",\"Failed conversion\",\"$commit_msg\",0.0,$commit_hash,\"$author_name\"" >> "$CHANGELOG_FILE"
+      
+      continue
     fi
     
-    # Update changelog
-    echo "[main] Attempting to update changelog for $processed_file_path..." >&2
+    echo "[main] Step 3: Update changelog" >&2
+    # Update changelog with the successfully converted file
     if update_changelog "$processed_file_path"; then
       echo "[main] Changelog updated successfully for $processed_file_path." >&2
+      ((processed_count++))
     else
-      echo "[main] Failed to update changelog for $processed_file_path. See errors above." >&2
-      overall_success=false 
+      echo "[main] Error: Failed to update changelog for $processed_file_path." >&2
+      overall_success=false
+      ((failed_count++))
     fi
-    
-    processed_count=$((processed_count + 1))
   done
   
-  echo "[main] Finished processing $processed_count files." >&2
+  echo "[main] Processing summary: $processed_count files processed successfully, $failed_count files failed." >&2
   
-  if [[ $processed_count -eq 0 && ! -f "$CHANGELOG_FILE" ]]; then
-    echo "[main] Creating empty changelog as no files were processed and it doesn't exist." >&2
-    if ! mkdir -p "$(dirname "$CHANGELOG_FILE")"; then echo "[main] Error creating dir for empty changelog" >&2; fi
-    if ! echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"; then echo "[main] Error creating empty changelog file" >&2; fi
+  # Double-check that the changelog file exists and is readable
+  if [[ ! -f "$CHANGELOG_FILE" ]]; then
+    echo "[main] Warning: CHANGELOG_FILE does not exist after processing. Creating empty file." >&2
+    mkdir -p "$(dirname "$CHANGELOG_FILE")" 2>/dev/null
+    echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
+    chmod 644 "$CHANGELOG_FILE" 2>/dev/null
   fi
   
+  # Show the current changelog file details
+  echo "[main] Final changelog file status:" >&2
+  if [[ -f "$CHANGELOG_FILE" ]]; then
+    echo "[main] Changelog exists at $CHANGELOG_FILE" >&2
+    echo "[main] Size: $(wc -c < "$CHANGELOG_FILE" 2>/dev/null || echo "unknown") bytes" >&2
+    echo "[main] Line count: $(wc -l < "$CHANGELOG_FILE" 2>/dev/null || echo "unknown") lines" >&2
+    echo "[main] First 2 lines:" >&2
+    head -n 2 "$CHANGELOG_FILE" >&2
+    echo "[main] Last 2 lines:" >&2
+    tail -n 2 "$CHANGELOG_FILE" >&2
+  else
+    echo "[main] ERROR: Changelog file still does not exist at $CHANGELOG_FILE" >&2
+  fi
+  
+  # Make sure the changelog file is added to git
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1 && [[ -f "$CHANGELOG_FILE" ]]; then
+    echo "[main] Adding changelog file to git..." >&2
+    git add -f "$CHANGELOG_FILE" >/dev/null 2>&1 || echo "[main] Warning: Failed to add changelog to git" >&2
+  fi
+  
+  # Generate GitHub step summary with the processed file information
   generate_github_step_summary "$processed_count"
 
   if [[ "$overall_success" = false ]]; then
-    echo "[main] One or more operations failed during processing. Please check logs." >&2
-    # exit 1 # Optionally exit with error
+    echo "[main] One or more operations failed during processing. Check logs for details." >&2
+    echo "[main] Script finished with warnings." >&2
+    # Don't exit with error by default to allow the workflow to continue
+  else
+    echo "[main] Script execution finished successfully." >&2
   fi
-  echo "[main] Script execution finished." >&2
+  
+  # Export statistics as environment variables for GitHub Actions
+  if [[ -n "$GITHUB_ENV" ]]; then
+    echo "DIAGRAMS_PROCESSED_COUNT=$processed_count" >> $GITHUB_ENV
+    echo "DIAGRAMS_FAILED_COUNT=$failed_count" >> $GITHUB_ENV
+  fi
+  
+  return 0
 }
 
 # The assign_ids function is now defined earlier in the script
