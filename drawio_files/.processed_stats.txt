@@ -1,0 +1,2 @@
+processed_count=0
+failed_count=2
