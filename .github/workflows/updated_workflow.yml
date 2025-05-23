@@ -6,20 +6,8 @@ on:
       - 'drawio_files/**/*.drawio'
   workflow_dispatch:
     inputs:
-      specific_              if [ -f "$SPECIFIC_FILE" ]; then
-                CHANGED_FILES="$SPECIFIC_FILE"
-                echo "Using specific file from input: $CHANGED_FILES"
-              else
-                echo "Specified file '$SPECIFIC_FILE' not found. Looking for existing drawio files instead."
-                # Find existing drawio files instead of creating test files
-                EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | head -n 5)
-                if [ -n "$EXISTING_FILES" ]; then
-                  CHANGED_FILES="$EXISTING_FILES"
-                  echo "Found existing drawio files to process: $CHANGED_FILES"
-                else
-                  echo "No drawio files found in the repository."
-                fi
-              fi  description: 'Specific file to process (leave empty for all files)'
+      specific_file:
+        description: 'Specific file to process (leave empty for all files)'
         required: false
         default: ''
 
@@ -92,23 +80,6 @@ jobs:
           mkdir -p ./drawio_files
           echo "Output directories ensured."
 
-<<<<<<< HEAD
-      # We're not creating test diagrams anymore
-      - name: Check for Existing Diagrams
-        shell: bash
-        run: |
-          echo "Checking for existing diagrams to process..."
-          
-          # Find existing drawio files instead of creating test files
-          EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | sort | head -n 5)
-          if [ -n "$EXISTING_FILES" ]; then
-            echo "Found existing drawio files to process:"
-            echo "$EXISTING_FILES"
-            echo "CHANGED_FILES=$EXISTING_FILES" >> $GITHUB_ENV
-          else
-            echo "No drawio files found in the repository."
-          fi
-=======
       - name: Check for Existing Diagrams
         shell: bash
         run: |
@@ -133,7 +104,6 @@ jobs:
           
           echo "Setting CHANGED_FILES to process"
           echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
->>>>>>> a674433 (Refactor code structure for improved readability and maintainability)
 
       - name: Process Draw.io files
         id: process_files
@@ -536,7 +506,8 @@ jobs:
       - name: Test SharePoint Connectivity
         id: sharepoint_test
         continue-on-error: true
-        run: echo '::set-output name=connectivity_status::ok' # Placeholder
+        run: |
+          echo "connectivity_status=ok" >> $GITHUB_OUTPUT # Using newer syntax
         # ... (actual script) ...
 
       - name: Create Diagrams folder in SharePoint if needed
@@ -605,7 +576,7 @@ jobs:
               echo "❌ All SharePoint upload methods failed (shell path)."
             fi
           fi
-          echo "::set-output name=upload_status_output::$UPLOAD_SUCCESS_SHELL" # Use a distinct output name
+          echo "upload_status_output=$UPLOAD_SUCCESS_SHELL" >> $GITHUB_OUTPUT # Use a distinct output name
         env:
           SHAREPOINT_CLIENT_ID: ${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID }}
           SHAREPOINT_CLIENT_SECRET: ${{ secrets.DIAGRAMS_SHAREPOINT_CLIENTSECRET }}
@@ -641,7 +612,7 @@ jobs:
           fi
           
           echo "Final determined upload status for job output: $final_upload_status"
-          echo "::set-output name=final_status::$final_upload_status"
+          echo "final_status=$final_upload_status" >> $GITHUB_OUTPUT
 
   send_notification:
     name: Send Teams Notification
