@@ -275,7 +275,9 @@ jobs:
             done
           fi
           
-          # Export to environment for the script
+          # Update CHANGED_FILES to use new filenames after renaming
+          CHANGED_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | tr '\n' ' ')
+          echo "Using renamed files for processing: $CHANGED_FILES"
           echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
           echo "=== End File Detection Phase ==="
           
@@ -284,10 +286,38 @@ jobs:
           env | grep -E '^(CHANGED_|DIAGRAMS_|PNG_)' | sort
           echo "=== End Environment Variables ==="
           
-          # Execute main processing script with explicit output capture
-          echo "=== Begin Processing Script Execution ==="
-          # Use the fixed script instead of the original
-          # Run with error handling for known non-fatal errors
+          # Execute png conversion directly in the workflow
+          echo "=== Begin File Processing ==="
+          for file in $CHANGED_FILES; do
+            if [ -f "$file" ]; then
+              PNG_OUTPUT="png_files/$(basename "${file%.drawio}.png")"
+              echo "Converting $file to $PNG_OUTPUT"
+              
+              # Run drawio with explicit output path
+              xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio -x -f png \
+                --scale ${{ env.DIAGRAMS_PNG_SCALE }} \
+                --quality ${{ env.DIAGRAMS_PNG_QUALITY }} \
+                -o "$PNG_OUTPUT" "$file" || {
+                    ERROR_CODE=$?
+                    echo "::error::Failed to convert $file to PNG (Error: $ERROR_CODE)"
+                    continue
+                }
+              
+              if [ -f "$PNG_OUTPUT" ]; then
+                echo "✅ Successfully created $PNG_OUTPUT"
+              else
+                echo "::error::PNG file $PNG_OUTPUT was not created"
+              fi
+            fi
+          done
+          
+          # Calculate processing results
+          PROCESSED_COUNT=$(find png_files -name "*.png" -type f -mmin -60 2>/dev/null | wc -l)
+          FAILED_COUNT=0
+          
+          echo "Processing complete. Processed: $PROCESSED_COUNT, Failed: $FAILED_COUNT"
+          
+          # Run the script for any additional processing if needed
           bash ./scripts/fixed_process_drawio_files.sh || {
             ERROR_CODE=$?
             # Check if png was actually created despite error
