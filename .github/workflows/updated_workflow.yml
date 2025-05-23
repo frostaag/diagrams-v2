@@ -305,6 +305,22 @@ jobs:
               
               if [ -f "$PNG_OUTPUT" ]; then
                 echo "✅ Successfully created $PNG_OUTPUT"
+                
+                # Extract ID and name for changelog
+                FILE_ID=$(basename "$file" | grep -o '^[0-9]\{3\}')
+                FILE_NAME=$(basename "$file" | sed 's/^[0-9]\{3\}_//' | sed 's/\.drawio$//')
+                CURRENT_DATE=$(date +"%d.%m.%Y")
+                CURRENT_TIME=$(date +"%H:%M:%S")
+                
+                # Create or update changelog
+                if [ ! -f "${{ env.DIAGRAMS_CHANGELOG_FILE }}" ]; then
+                  mkdir -p "$(dirname "${{ env.DIAGRAMS_CHANGELOG_FILE }}")"
+                  echo "Date,Time,Diagram ID,Diagram Name,File Path,Action,Commit Message,Version,Commit Hash,Author Name" > "${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+                fi
+                
+                # Add entry to changelog
+                echo "$CURRENT_DATE,$CURRENT_TIME,\"$FILE_ID\",\"$FILE_NAME\",\"$(basename "$PNG_OUTPUT")\",\"Generated\",\"${{ github.event.head_commit.message }}\",\"1.0\",\"${{ github.sha }}\",\"${{ github.actor }}\"" >> "${{ env.DIAGRAMS_CHANGELOG_FILE }}"
+                echo "Added changelog entry for $FILE_NAME (ID: $FILE_ID)"
               else
                 echo "::error::PNG file $PNG_OUTPUT was not created"
               fi
