@@ -202,10 +202,11 @@ jobs:
               echo "Converting $file to $PNG_OUTPUT"
               
               # Run drawio with explicit output path
-              xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio -x -f png \
-                --scale ${{ env.DIAGRAMS_PNG_SCALE }} \
-                --quality ${{ env.DIAGRAMS_PNG_QUALITY }} \
-                -o "$PNG_OUTPUT" "$file" || {
+          # Add no-sandbox and disable-gpu flags to avoid GPU/DBus issues
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio --no-sandbox --disable-gpu -x -f png \
+            --scale ${{ env.DIAGRAMS_PNG_SCALE }} \
+            --quality ${{ env.DIAGRAMS_PNG_QUALITY }} \
+            -o "$PNG_OUTPUT" "$file" || {
                     ERROR_CODE=$?
                     echo "::error::Failed to convert $file to PNG (Error: $ERROR_CODE)"
                     continue
@@ -214,9 +215,24 @@ jobs:
               if [ -f "$PNG_OUTPUT" ]; then
                 echo "✅ Successfully created $PNG_OUTPUT"
                 
-                # Extract ID and name for changelog
-                FILE_ID=$(basename "$file" | grep -o '^[0-9]\{3\}')
-                FILE_NAME=$(basename "$file" | sed 's/^[0-9]\{3\}_//' | sed 's/\.drawio$//')
+                # Extract ID and name for changelog (handle both standard and legacy formats)
+                BASENAME=$(basename "$file")
+                if [[ $BASENAME =~ ^[0-9]{3}_ ]]; then
+                  # Standard format: 001_name.drawio
+                  FILE_ID=$(echo "$BASENAME" | grep -o '^[0-9]\{3\}')
+                  FILE_NAME=$(echo "$BASENAME" | sed 's/^[0-9]\{3\}_//' | sed 's/\.drawio$//')
+                elif [[ $BASENAME =~ ^[0-9]+(\.[0-9]+)?(_|$) ]]; then
+                  # Legacy format: 4.drawio or 3.3_name.drawio
+                  FILE_ID=$(echo "$BASENAME" | grep -o '^[0-9]\+\(\.[0-9]\+\)\?')
+                  FILE_NAME=$(echo "$BASENAME" | sed 's/^[0-9]\+\(\.[0-9]\+\)\?_\?//' | sed 's/\.drawio$//')
+                  if [ -z "$FILE_NAME" ]; then
+                    FILE_NAME="$FILE_ID"
+                  fi
+                else
+                  # Unknown format
+                  FILE_ID="-"
+                  FILE_NAME=$(echo "$BASENAME" | sed 's/\.drawio$//')
+                fi
                 CURRENT_DATE=$(date +"%d.%m.%Y")
                 CURRENT_TIME=$(date +"%H:%M:%S")
                 
