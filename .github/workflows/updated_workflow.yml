@@ -16,7 +16,6 @@ env:
   DIAGRAMS_PNG_SCALE: "2.0"
   DIAGRAMS_PNG_QUALITY: "100"
   DIAGRAMS_CHANGELOG_FILE: "png_files/CHANGELOG.csv"
-  DIAGRAMS_COUNTER_FILE: "drawio_files/.counter"
   DIAGRAMS_SHAREPOINT_FOLDER: "Diagrams"
   DIAGRAMS_SHAREPOINT_OUTPUT_FILENAME: "Diagrams_Changelog.csv"
   DIAGRAMS_SHAREPOINT_URL: "https://frostaag.sharepoint.com/sites/DatasphereFileConnector"
@@ -79,97 +78,6 @@ jobs:
           mkdir -p ./png_files
           mkdir -p ./drawio_files
           echo "Output directories ensured."
-
-      - name: Manage File IDs and Rename
-        id: manage_ids
-        run: |
-          echo "=== Starting ID Management ==="
-          
-          # Initialize id mapping file and counter file
-          ID_MAPPING_FILE="drawio_files/.id_mapping.csv"
-          COUNTER_FILE="drawio_files/.counter"
-          
-          # Create or read counter and mapping files
-          if [ ! -f "$COUNTER_FILE" ]; then
-            echo "1" > "$COUNTER_FILE"
-            echo "Original Filename,Assigned ID,First Seen" > "$ID_MAPPING_FILE"
-          fi
-          CURRENT_ID=$(cat "$COUNTER_FILE")
-          
-          # Read existing mappings into memory
-          declare -A FILE_IDS
-          if [ -f "$ID_MAPPING_FILE" ]; then
-            while IFS=, read -r fname id _; do
-              if [ "$fname" != "Original Filename" ]; then
-                FILE_IDS["$fname"]="$id"
-              fi
-            done < "$ID_MAPPING_FILE"
-          fi
-          
-          # Function to format ID with leading zeros
-          format_id() {
-            printf "%03d" "$1"
-          }
-          
-          # Process all drawio files
-          for file in drawio_files/*; do
-            if [ -f "$file" ] && { [ "${file##*.}" = "drawio" ] || [ ! -e "${file%.*}" ]; }; then
-              BASENAME=$(basename "$file")
-              BASENAME_NO_EXT="${BASENAME%.drawio}"
-              
-              # Skip files that start with a dot
-              if [[ "$BASENAME" == .* ]]; then
-                continue
-              fi
-              
-              # Check if this is a new file (version 1.0)
-              IS_NEW=false
-              if grep -q "\"version\":\"1.0\"" "$file" 2>/dev/null || ! grep -q "\"version\":" "$file" 2>/dev/null; then
-                IS_NEW=true
-              fi
-              
-              if [ "$IS_NEW" = true ] && [[ ! "$BASENAME" =~ ^[0-9]{3}_ ]]; then
-                # Generate new ID and increment counter
-                NEW_ID=$(format_id "$CURRENT_ID")
-                
-                # Check if file already has an ID in mapping
-                if [ -n "${FILE_IDS[$BASENAME]}" ]; then
-                  echo "File $BASENAME already has ID ${FILE_IDS[$BASENAME]}"
-                  NEW_ID="${FILE_IDS[$BASENAME]}"
-                else
-                  # Add to mapping file
-                  echo "$BASENAME,$NEW_ID,$(date +"%Y-%m-%d %H:%M:%S")" >> "$ID_MAPPING_FILE"
-                  FILE_IDS[$BASENAME]="$NEW_ID"
-                  
-                  # Increment counter for next use
-                  CURRENT_ID=$((CURRENT_ID + 1))
-                  echo "$CURRENT_ID" > "$COUNTER_FILE"
-                fi
-                
-                # Rename files
-                NEW_NAME="drawio_files/${NEW_ID}_${BASENAME}"
-                if [ "$file" != "$NEW_NAME" ]; then
-                  mv "$file" "$NEW_NAME"
-                  echo "Renamed $file to $NEW_NAME"
-                  
-                  # Update corresponding PNG if it exists
-                  PNG_FILE="png_files/${BASENAME_NO_EXT}.png"
-                  if [ -f "$PNG_FILE" ]; then
-                    NEW_PNG="png_files/${NEW_ID}_${BASENAME_NO_EXT}.png"
-                    mv "$PNG_FILE" "$NEW_PNG"
-                    echo "Renamed $PNG_FILE to $NEW_PNG"
-                  fi
-                  
-                  # Export for changelog
-                  echo "LAST_ASSIGNED_ID=$NEW_ID" >> $GITHUB_ENV
-                  echo "ORIGINAL_FILENAME=$BASENAME" >> $GITHUB_ENV
-                  echo "NEW_FILENAME=${NEW_ID}_${BASENAME}" >> $GITHUB_ENV
-                fi
-              fi
-            fi
-          done
-          
-          echo "ID management complete. Counter at: $(cat $COUNTER_FILE)"
 
       - name: Check for Existing Diagrams
         shell: bash
@@ -454,10 +362,8 @@ jobs:
           # Disable xtrace
           set +x
         env:
-          SPECIFIC_FILE: ${{ github.event.inputs.specific_file }}
           DIAGRAMS_PNG_SCALE: ${{ env.DIAGRAMS_PNG_SCALE }}
           DIAGRAMS_PNG_QUALITY: ${{ env.DIAGRAMS_PNG_QUALITY }}
-          DIAGRAMS_COUNTER_FILE: ${{ env.DIAGRAMS_COUNTER_FILE }}
           DIAGRAMS_CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}
 
       - name: Debug File Processing
@@ -498,7 +404,7 @@ jobs:
           # Check environment variables
           echo "== Key Environment Variables =="
           echo "DIAGRAMS_CHANGELOG_FILE: ${{ env.DIAGRAMS_CHANGELOG_FILE }}"
-          echo "DIAGRAMS_COUNTER_FILE: ${{ env.DIAGRAMS_COUNTER_FILE }}"
+          echo "=== Checking environment variables ==="
           
           # Check directory permissions
           echo "== Directory Permissions =="
