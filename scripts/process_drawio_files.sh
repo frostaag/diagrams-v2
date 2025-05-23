@@ -70,38 +70,56 @@ detect_changed_files() {
 
 # Function to assign IDs to new files
 assign_ids() {
-  local file="$1"
+  local file_param="$1" # Use a different name to avoid confusion with global 'file'
+  local current_file_path="$file_param" # Track the path, may change if renamed
   local basename
-  basename=$(basename "$file")
-  
-  # Check if file already has an ID pattern (###) or is a numeric filename
+  basename=$(basename "$current_file_path")
+  echo "[assign_ids] Called for file: $current_file_path (basename: $basename)" >&2
+
   if [[ "$basename" =~ \\([0-9]{3}\\)\\.drawio$ ]] || [[ "$basename" =~ ^[0-9]+\\.drawio$ ]]; then
-    echo "File $basename already has an ID, skipping ID assignment."
+    echo "[assign_ids] File $basename already has an ID or is numeric. No renaming needed." >&2
+    echo "$current_file_path" # Output original path
     return 0
   fi
   
-  # Read current counter
+  if [[ ! -f "$COUNTER_FILE" ]]; then
+    echo "[assign_ids] Counter file $COUNTER_FILE not found. Creating with 000." >&2
+    if ! mkdir -p "$(dirname "$COUNTER_FILE")"; then echo "[assign_ids] Error creating dir for $COUNTER_FILE" >&2; echo "$current_file_path"; return 1; fi
+    if ! echo "000" > "$COUNTER_FILE"; then echo "[assign_ids] Error creating $COUNTER_FILE" >&2; echo "$current_file_path"; return 1; fi
+  fi
+  
   local counter
   counter=$(<"$COUNTER_FILE")
-  # Increment counter
   local new_counter_val
   new_counter_val=$((10#$counter + 1))
   local new_counter_str
   new_counter_str=$(printf "%03d" $new_counter_val)
-  # New filename with ID
+  
   local filename_without_ext="${basename%.drawio}"
   local new_filename="${filename_without_ext} (${new_counter_str}).drawio"
   # Ensure DRAWIO_FILES_DIR is used for the new path
   local new_filepath="${DRAWIO_FILES_DIR}/${new_filename}"
   
-  # Rename the file
-  mv "$file" "$new_filepath"
+  echo "[assign_ids] Attempting to rename $current_file_path to $new_filepath" >&2
+  if ! mv "$current_file_path" "$new_filepath"; then
+    echo "[assign_ids] Error: Failed to rename $current_file_path to $new_filepath." >&2
+    echo "$current_file_path" # Output original path on failure
+    return 1
+  fi
   
-  # Update counter file
-  echo "$new_counter_str" > "$COUNTER_FILE"
+  if ! echo "$new_counter_str" > "$COUNTER_FILE"; then
+    echo "[assign_ids] Error: Failed to update counter file $COUNTER_FILE." >&2
+    # File was renamed, but counter not updated. This is problematic.
+    # Consider reverting rename or other error handling. For now, log and continue with new path.
+    echo "$new_filepath" # Output new path despite counter error
+    return 1 # Signal error due to counter update failure
+  fi
   
-  echo "Assigned ID $new_counter_str to $basename -> $new_filename"
-  # Update the file variable for further processing
+  echo "[assign_ids] Assigned ID $new_counter_str to $basename -> $new_filename. New path: $new_filepath" >&2
+  echo "$new_filepath" # Output new path
+  return 0
+  
+  # Update the file variable for further processing (for GitHub Actions)
   echo "PROCESSED_FILE=$new_filepath" >> $GITHUB_ENV
 }
 
@@ -240,4 +258,327 @@ create_placeholder_png() {
 }
 
 # Function to determine version increment
-determine_version() 
+determine_version() {
+  local file="$1"
+  echo "[determine_version] Called for file: $file" >&2
+  local id
+  id=$(extract_id "$file")
+  
+  if [[ -z "$id" ]]; then
+    echo "[determine_version] Error: Could not extract ID from $file. Cannot determine version." >&2
+    return 1 # Signal error
+  fi
+  
+  local commit_msg
+  commit_msg=$(git log -1 --format="%s" -- "$file")
+  echo "[determine_version] Commit message for $file (for versioning logic): '$commit_msg'" >&2
+  
+  local version_file="$PNG_FILES_DIR/.versions"
+  local major=1 # Default major version
+  local minor=0 # Default minor version
+  
+  if [[ -f "$version_file" ]]; then
+    echo "[determine_version] Version file exists at $version_file" >&2
+    local current_version_line
+    current_version_line=$(grep "^$id:" "$version_file")
+    if [[ -n "$current_version_line" ]]; then
+      local current_version
+      current_version=$(echo "$current_version_line" | cut -d: -f2)
+      if [[ "$current_version" =~ ^([0-9]+)\\.([0-9]+)$ ]]; then
+        major=${BASH_REMATCH[1]}
+        minor=${BASH_REMATCH[2]}
+      elif [[ "$current_version" =~ ^([0-9]+)$ ]]; then
+        major=${BASH_REMATCH[1]}
+        minor=0 
+      else
+        echo "[determine_version] Warning: Unexpected version format '$current_version' for ID $id. Resetting to 1.0." >&2
+        major=1
+        minor=0
+      fi
+      echo "[determine_version] Found existing version for ID $id: $major.$minor" >&2
+    else
+      echo "[determine_version] No existing version for ID $id in $version_file. Initializing to 1.0." >&2
+      major=1
+      minor=0
+    fi
+  else
+    echo "[determine_version] Version file '$version_file' not found. Initializing version for ID $id to 1.0." >&2
+    # major=1, minor=0 already set as defaults
+    # Create the .versions file with a header if it's the very first time
+    if ! mkdir -p "$(dirname "$version_file")"; then echo "[determine_version] Error creating directory for $version_file" >&2; return 1; fi
+    if ! echo "# Diagram ID to Version mapping" > "$version_file"; then echo "[determine_version] Error creating $version_file" >&2; return 1; fi
+    echo "[determine_version] Created $version_file with header." >&2
+  fi
+  
+  if echo "$commit_msg" | grep -Eiq '(added|new|initial|create)'; then
+    echo "[determine_version] Commit message suggests new file. Setting version for ID $id to 1.0." >&2
+    major=1
+    minor=0
+  else
+    echo "[determine_version] Commit message suggests update. Incrementing minor version for ID $id from $major.$minor." >&2
+    minor=$((10#$minor + 1))
+  fi
+  
+  local new_version="${major}.${minor}"
+  echo "[determine_version] Determined version for ID $id ($file): $new_version" >&2
+  
+  local temp_version_file
+  temp_version_file=$(mktemp)
+  if [[ $? -ne 0 ]] || [[ -z "$temp_version_file" ]]; then echo "[determine_version] Error creating temp file for .versions" >&2; return 1; fi
+
+  if grep -q "^$id:" "$version_file"; then
+    echo "[determine_version] Updating existing entry in $version_file for ID $id to version $new_version" >&2
+    sed "s/^$id:.*/$id:$new_version/" "$version_file" > "$temp_version_file" && mv "$temp_version_file" "$version_file"
+    if [[ $? -ne 0 ]]; then echo "[determine_version] Error updating $version_file" >&2; rm -f "$temp_version_file"; return 1; fi
+  else
+    echo "[determine_version] Adding new entry to $version_file for ID $id with version $new_version" >&2
+    echo "$id:$new_version" >> "$version_file"
+    if [[ $? -ne 0 ]]; then echo "[determine_version] Error adding to $version_file" >&2; rm -f "$temp_version_file"; return 1; fi
+    # Temp file not used in this path, but ensure it's cleaned up if mktemp was called
+    rm -f "$temp_version_file" 
+  fi
+  
+  echo "$new_version" 
+  return 0 
+}
+
+# Function to update changelog
+update_changelog() {
+  local file="$1" 
+  echo "[update_changelog] Called for file: $file" >&2
+  echo "[update_changelog] Working directory: $(pwd)" >&2
+  
+  # Make sure files are where we think they should be
+  echo "[update_changelog] Directory contents before processing:" >&2
+  ls -la "$(dirname "$CHANGELOG_FILE")" 2>/dev/null || echo "[update_changelog] Directory doesn't exist yet" >&2
+  
+  local basename
+  basename=$(basename "$file")
+  local filename_without_ext="${basename%.drawio}"
+  
+  # Get commit information 
+  local commit_hash_to_log="$(git log -1 --format="%h")"
+  local commit_msg_to_log="$(git log -1 --format="%s")"
+  local author_name_to_log="$(git log -1 --format="%an")"
+  
+  echo "[update_changelog] Commit info: hash=$commit_hash_to_log, author=$author_name_to_log, msg=$commit_msg_to_log" >&2
+  
+  # Get current date and time
+  local current_date=$(date +"%d.%m.%Y")
+  local current_time=$(date +"%H:%M:%S")
+  
+  # Get version
+  echo "[update_changelog] Attempting to determine version for $file..." >&2
+  local version_output
+  version_output=$(determine_version "$file")
+  local determine_version_exit_code=$?
+
+  if [[ $determine_version_exit_code -ne 0 ]] || [[ -z "$version_output" ]]; then
+      echo "[update_changelog] Error: determine_version failed for $file or returned empty. Exit code: $determine_version_exit_code. Using default version 1.0." >&2
+      version_output="1.0"
+  fi
+  local version="$version_output"
+  echo "[update_changelog] Version determined for $file: $version" >&2
+  
+  # Prepare the changelog entry
+  local entry="$current_date,$current_time,\"$filename_without_ext\",\"$file\",\"Converted to PNG\",\"$commit_msg_to_log\",$version,$commit_hash_to_log,\"$author_name_to_log\""
+  echo "[update_changelog] Changelog entry to be added: $entry" >&2
+  
+  # Ensure the output directory exists
+  mkdir -p "$(dirname "$CHANGELOG_FILE")" || {
+    echo "[update_changelog] ERROR: Failed to create directory for $CHANGELOG_FILE" >&2
+    return 1
+  }
+  
+  # Create or update the changelog file - use a simpler approach to avoid potential issues
+  if [[ ! -f "$CHANGELOG_FILE" ]]; then
+    # Create new file with header and first entry
+    {
+      echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name"
+      echo "$entry"
+    } > "$CHANGELOG_FILE"
+    
+    # Check if file was created
+    if [[ ! -f "$CHANGELOG_FILE" ]]; then
+      echo "[update_changelog] ERROR: Failed to create $CHANGELOG_FILE" >&2
+      return 1
+    fi
+    echo "[update_changelog] Created new changelog with header and entry" >&2
+  else
+    # Append to existing file
+    echo "$entry" >> "$CHANGELOG_FILE"
+    echo "[update_changelog] Added entry to existing changelog" >&2
+  fi
+  
+  # Verify the file exists and show content
+  if [[ -f "$CHANGELOG_FILE" ]]; then
+    echo "[update_changelog] Changelog file exists after update. Size: $(wc -c < "$CHANGELOG_FILE") bytes" >&2
+    echo "[update_changelog] Changelog contents:" >&2
+    cat "$CHANGELOG_FILE" >&2
+    
+    # Ensure file has correct permissions
+    chmod 644 "$CHANGELOG_FILE"
+    
+    # Print directory after processing
+    echo "[update_changelog] Directory contents after processing:" >&2
+    ls -la "$(dirname "$CHANGELOG_FILE")" >&2
+    
+    # Finally touch the file to ensure timestamp is updated
+    touch "$CHANGELOG_FILE"
+    
+    return 0
+  else
+    echo "[update_changelog] ERROR: Changelog file does not exist after update attempt" >&2
+    return 1
+  fi
+}
+
+# Function to generate GitHub step summary
+generate_github_step_summary() {
+  local processed_count="$1"
+  
+  # If GITHUB_STEP_SUMMARY isn't available, we're not running in GitHub Actions
+  if [[ -z "$GITHUB_STEP_SUMMARY" ]]; then
+    echo "Not running in GitHub Actions, skipping summary generation"
+    return
+  fi
+  
+  echo "Generating GitHub step summary..."
+  
+  # Header
+  echo "## 📊 Draw.io Processing Summary" >> $GITHUB_STEP_SUMMARY
+  echo "" >> $GITHUB_STEP_SUMMARY
+  
+  if [[ $processed_count -eq 0 ]]; then
+    echo "📝 **No diagrams processed in this run**" >> $GITHUB_STEP_SUMMARY
+    return
+  fi
+  
+  # Get list of processed files from the latest changes
+  local processed_files=$(git diff --name-only HEAD~1 HEAD -- 'png_files/*.png' | sed 's|png_files/||g' | sed 's|.png$||g')
+  
+  echo "### 🔄 Processed Files (${processed_count})" >> $GITHUB_STEP_SUMMARY
+  echo "" >> $GITHUB_STEP_SUMMARY
+  
+  echo "| File | Version | Action |" >> $GITHUB_STEP_SUMMARY
+  echo "|------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+  
+  # Extract information from changelog
+  if [[ -f "$CHANGELOG_FILE" ]]; then
+    # Skip the header line and get the last $processed_count lines
+    tail -n "$processed_count" "$CHANGELOG_FILE" | while IFS=, read -r date time diagram file action message version hash author; do
+      # Clean up the values (remove quotes)
+      diagram=$(echo "$diagram" | tr -d '"')
+      version=$(echo "$version" | tr -d '"')
+      action=$(echo "$action" | tr -d '"')
+      
+      echo "| ${diagram} | ${version} | ${action} |" >> $GITHUB_STEP_SUMMARY
+    done
+  fi
+  
+  echo "" >> $GITHUB_STEP_SUMMARY
+  echo "### ⚙️ Configuration" >> $GITHUB_STEP_SUMMARY
+  echo "" >> $GITHUB_STEP_SUMMARY
+  echo "- **PNG Scale**: ${PNG_SCALE}" >> $GITHUB_STEP_SUMMARY
+  echo "- **PNG Quality**: ${PNG_QUALITY}" >> $GITHUB_STEP_SUMMARY
+  echo "- **Changelog**: \`${CHANGELOG_FILE}\`" >> $GITHUB_STEP_SUMMARY
+  
+  echo "" >> $GITHUB_STEP_SUMMARY
+  echo "✅ **All diagrams processed successfully**" >> $GITHUB_STEP_SUMMARY
+}
+
+# Main flow
+main() {
+  echo "[main] Starting script execution." >&2
+  
+  # Check if CHANGED_FILES is already set from the environment
+  if [[ -z "$CHANGED_FILES" ]]; then
+    # If not set, run detect_changed_files to set it
+    detect_changed_files
+  else
+    echo "[main] Using CHANGED_FILES from environment: $CHANGED_FILES" >&2
+  fi
+  
+  # Force-export CHANGED_FILES to ensure it's accessible in all parts of the script
+  export CHANGED_FILES
+  
+  # Print all environment variables to help with debugging
+  echo "[main] Debug: All environment variables:" >&2
+  env | grep -v PASSWORD | grep -v SECRET | grep -v TOKEN >&2
+  
+  # Verify once more that we have files to process
+  if [[ -z "$CHANGED_FILES" ]]; then
+    echo "[main] No files to process (CHANGED_FILES is empty). Exiting." >&2
+    exit 0
+  fi
+  echo "[main] Files to process based on CHANGED_FILES env var: $CHANGED_FILES" >&2
+  
+  local processed_count=0
+  local overall_success=true 
+
+  # Process each file in the CHANGED_FILES list
+  for file_to_process_loopvar in $CHANGED_FILES; do
+    echo "[main] Processing file from list: '$file_to_process_loopvar'" >&2
+    
+    if [[ ! -f "$file_to_process_loopvar" ]]; then
+      echo "[main] Warning: File $file_to_process_loopvar from CHANGED_FILES list does not exist, skipping." >&2
+      continue
+    fi
+    
+    local processed_file_path="$file_to_process_loopvar" # Start with the original path
+    
+    # Assign ID if needed
+    local path_after_assign_ids
+    path_after_assign_ids=$(assign_ids "$file_to_process_loopvar") # Assuming assign_ids is modified to echo new path
+    local assign_ids_exit_code=$?
+
+    if [[ $assign_ids_exit_code -ne 0 ]]; then
+        echo "[main] Error in assign_ids for $file_to_process_loopvar. Skipping." >&2
+        overall_success=false
+        continue
+    fi
+    # If assign_ids didn't rename, it should echo the original path.
+    # If it did rename, it echoes the new path.
+    processed_file_path="$path_after_assign_ids"
+    echo "[main] File path after assign_ids: $processed_file_path" >&2
+
+    # Convert to PNG
+    if ! convert_to_png "$processed_file_path"; then
+      echo "[main] Error: Failed to convert $processed_file_path to PNG, continuing with next file." >&2
+      overall_success=false
+      continue # Skip changelog for failed conversion
+    fi
+    
+    # Update changelog
+    echo "[main] Attempting to update changelog for $processed_file_path..." >&2
+    if update_changelog "$processed_file_path"; then
+      echo "[main] Changelog updated successfully for $processed_file_path." >&2
+    else
+      echo "[main] Failed to update changelog for $processed_file_path. See errors above." >&2
+      overall_success=false 
+    fi
+    
+    processed_count=$((processed_count + 1))
+  done
+  
+  echo "[main] Finished processing $processed_count files." >&2
+  
+  if [[ $processed_count -eq 0 && ! -f "$CHANGELOG_FILE" ]]; then
+    echo "[main] Creating empty changelog as no files were processed and it doesn't exist." >&2
+    if ! mkdir -p "$(dirname "$CHANGELOG_FILE")"; then echo "[main] Error creating dir for empty changelog" >&2; fi
+    if ! echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"; then echo "[main] Error creating empty changelog file" >&2; fi
+  fi
+  
+  generate_github_step_summary "$processed_count"
+
+  if [[ "$overall_success" = false ]]; then
+    echo "[main] One or more operations failed during processing. Please check logs." >&2
+    # exit 1 # Optionally exit with error
+  fi
+  echo "[main] Script execution finished." >&2
+}
+
+# The assign_ids function is now defined earlier in the script
+
+# Run the main function
+main "$@"
