@@ -129,17 +129,16 @@ jobs:
           OUTPUT_DIR="$(dirname "$PNG_OUTPUT")"
           mkdir -p "$OUTPUT_DIR"
           
+          # Use legacy format: -x for export
           xvfb-run -a \
             --server-args="-screen 0 1920x1080x24" \
             drawio \
             --no-sandbox \
             --disable-gpu \
-            --export \
-            --format png \
-            --border 0 \
-            --width 1920 \
-            --height 1080 \
-            --output "$PNG_OUTPUT" \
+            -x \
+            -f png \
+            -s 2 \
+            -o "$PNG_OUTPUT" \
             "$file" || {
               ERROR_CODE=$?
               echo "::group::DrawIO Conversion Error Details"
