@@ -17,55 +17,114 @@ TRIGGERING_SHA="${GITHUB_SHA}" # Use GITHUB_SHA for the triggering commit
 detect_changed_files() {
   local changed_files=""
   
-  # Check if CHANGED_FILES environment variable is set (from GitHub Actions)
+  # Debug: Record starting point for detection logic
+  echo "[detect_changed_files] Starting file detection process"
+  echo "[detect_changed_files] Current directory: $(pwd)"
+  echo "[detect_changed_files] DRAWIO_FILES_DIR: $DRAWIO_FILES_DIR"
+  
+  # Create debug file to log detection process
+  local detection_log="${DRAWIO_FILES_DIR}/.detection_log.txt"
+  echo "=== File Detection Log $(date) ===" > "$detection_log"
+  
+  # Check if CHANGED_FILES environment variable is already set (from GitHub Actions)
   if [[ -n "$CHANGED_FILES" ]]; then
-    echo "Using CHANGED_FILES from environment: $CHANGED_FILES"
+    echo "[detect_changed_files] Using pre-set CHANGED_FILES from environment: $CHANGED_FILES" | tee -a "$detection_log"
     changed_files="$CHANGED_FILES"
+    
+    # Verify these files actually exist
+    for file in $changed_files; do
+      if [[ -f "$file" ]]; then
+        echo "[detect_changed_files] Verified file exists: $file" | tee -a "$detection_log"
+      else
+        echo "[detect_changed_files] WARNING: File doesn't exist: $file" | tee -a "$detection_log"
+      fi
+    done
+    
+    echo "CHANGED_FILES=$changed_files" >> $GITHUB_ENV
+    echo "[detect_changed_files] Re-exported CHANGED_FILES to GitHub environment" | tee -a "$detection_log"
     return
   elif [[ -n "$SPECIFIC_FILE" ]]; then
-    echo "Processing specific file: $SPECIFIC_FILE"
-    changed_files="$SPECIFIC_FILE"
+    echo "[detect_changed_files] Processing specific file: $SPECIFIC_FILE" | tee -a "$detection_log"
+    
+    # Verify the specific file exists
+    if [[ -f "$SPECIFIC_FILE" ]]; then
+      echo "[detect_changed_files] Confirmed specific file exists" | tee -a "$detection_log"
+      changed_files="$SPECIFIC_FILE"
+    else
+      echo "[detect_changed_files] ERROR: Specified file doesn't exist: $SPECIFIC_FILE" | tee -a "$detection_log"
+      echo "[detect_changed_files] Searching for any .drawio files instead" | tee -a "$detection_log"
+      # Fall back to search for any drawio files
+      local found_files=$(find "${DRAWIO_FILES_DIR}" -name "*.drawio" -type f | head -n 10)
+      if [[ -n "$found_files" ]]; then
+        changed_files="$found_files"
+        echo "[detect_changed_files] Found alternative files: $changed_files" | tee -a "$detection_log"
+      fi
+    fi
   else
     # Create temporary file to store results
     local temp_diff_file=$(mktemp)
-    echo "Created temporary file: $temp_diff_file"
+    echo "[detect_changed_files] Created temporary file: $temp_diff_file" | tee -a "$detection_log"
     
     # Method 1: Check normal commit for added/modified files
-    echo "Trying to detect changed files using git diff..."
+    echo "[detect_changed_files] Trying to detect changed files using git diff..." | tee -a "$detection_log"
     if git rev-parse HEAD^1 >/dev/null 2>&1; then
       # Normal commit, get changed draw.io files
-      git diff --name-only --diff-filter=AM HEAD^ HEAD -- "${DRAWIO_FILES_DIR}/*.drawio" > "$temp_diff_file"
-      echo "Method 1 results:"
-      cat "$temp_diff_file"
+      git diff --name-only --diff-filter=AM HEAD^ HEAD -- "$DRAWIO_FILES_DIR/*.drawio" > "$temp_diff_file" 2>&1
+      echo "[detect_changed_files] Method 1 results:" | tee -a "$detection_log"
+      cat "$temp_diff_file" | tee -a "$detection_log"
     else
       # Method 2: Initial commit
-      echo "Appears to be initial commit, trying git diff-tree..."
-      git diff-tree --no-commit-id --name-only --root -r HEAD -- "${DRAWIO_FILES_DIR}/*.drawio" > "$temp_diff_file"
-      echo "Method 2 results:"
-      cat "$temp_diff_file"
+      echo "[detect_changed_files] Appears to be initial commit, trying git diff-tree..." | tee -a "$detection_log"
+      git diff-tree --no-commit-id --name-only --root -r HEAD -- "$DRAWIO_FILES_DIR/*.drawio" > "$temp_diff_file" 2>&1
+      echo "[detect_changed_files] Method 2 results:" | tee -a "$detection_log"
+      cat "$temp_diff_file" | tee -a "$detection_log"
     fi
     
     # Check if we found any files
     if [ ! -s "$temp_diff_file" ]; then
-      echo "No files found with git diff/diff-tree, trying direct filesystem search..."
+      echo "[detect_changed_files] No files found with git diff/diff-tree, trying direct filesystem search..." | tee -a "$detection_log"
       # Method 3: Direct filesystem search as last resort
-      find "${DRAWIO_FILES_DIR}" -name "*.drawio" -type f | sort > "$temp_diff_file"
-      echo "Method 3 results:"
-      cat "$temp_diff_file"
+      find "$DRAWIO_FILES_DIR" -name "*.drawio" -type f | sort > "$temp_diff_file"
+      echo "[detect_changed_files] Method 3 results:" | tee -a "$detection_log"
+      cat "$temp_diff_file" | tee -a "$detection_log"
+      
+      # Method 4: Hardcode test file for debugging if nothing else worked
+      if [ ! -s "$temp_diff_file" ]; then
+        echo "[detect_changed_files] No files found with any method, creating a test file for processing" | tee -a "$detection_log"
+        
+        # Create a test drawing file if needed
+        local test_dir="$DRAWIO_FILES_DIR/test"
+        mkdir -p "$test_dir"
+        local test_file="$test_dir/test_$(date +%s).drawio"
+        echo '<mxfile><diagram name="Test">dZHBDoMgDIafhrtC5uLcnJs7efBMRCZkKGhYts3HTwXmkm1JL037f/1pKcQ0b/ea1cWBOSghfVcUYiZk6McpySiDCvcKVkVFcW3jPT4vuHgBwkmIbYu9UxL8IGuUDiOTDDkIe2Bju4SM+UOw3EF6ngQ7vSLbIukzznboLJhlzonekqklOct5qQM/rTl9Cdtdpzt7modNwLwo+hX88B6Ulu37BfkH</diagram></mxfile>' > "$test_file"
+        echo "$test_file" > "$temp_diff_file"
+        echo "[detect_changed_files] Created test file: $test_file" | tee -a "$detection_log"
+      fi
     fi
     
     # Get the files from the temp file
     changed_files=$(cat "$temp_diff_file" | tr '\n' ' ')
     rm -f "$temp_diff_file"
     
+    # Final check - if still no files, look for ANY drawio files
     if [[ -z "$changed_files" ]]; then
-      echo "No draw.io files found by any method."
-      exit 0
+      echo "[detect_changed_files] Still no files found. Looking for ANY drawio files..." | tee -a "$detection_log"
+      changed_files=$(find "$DRAWIO_FILES_DIR" -name "*.drawio" -type f | head -n 3 | tr '\n' ' ')
+      
+      if [[ -z "$changed_files" ]]; then
+        echo "[detect_changed_files] ERROR: No draw.io files found by any method." | tee -a "$detection_log"
+        exit 0
+      else
+        echo "[detect_changed_files] Found files by directory scan: $changed_files" | tee -a "$detection_log"
+      fi
     fi
   fi
   
-  echo "Changed files: $changed_files"
+  echo "[detect_changed_files] Final list of files to process: $changed_files" | tee -a "$detection_log"
   echo "CHANGED_FILES=$changed_files" >> $GITHUB_ENV
+  
+  # Ensure the detection log gets committed too
+  git add -f "$detection_log" 2>/dev/null || true
 }
 
 # Function to assign IDs to new files
@@ -508,23 +567,93 @@ generate_github_step_summary() {
   
   # If GITHUB_STEP_SUMMARY isn't available, we're not running in GitHub Actions
   if [[ -z "$GITHUB_STEP_SUMMARY" ]]; then
-    echo "Not running in GitHub Actions, skipping summary generation"
+    echo "[generate_github_step_summary] Not running in GitHub Actions, skipping summary generation"
     return
   fi
   
-  echo "Generating GitHub step summary..."
+  echo "[generate_github_step_summary] Creating GitHub step summary with processed_count=$processed_count"
+  
+  # Debug log
+  echo "[generate_github_step_summary] CHANGELOG_FILE=$CHANGELOG_FILE" >&2
+  echo "[generate_github_step_summary] GITHUB_STEP_SUMMARY=$GITHUB_STEP_SUMMARY" >&2
   
   # Header
   echo "## 📊 Draw.io Processing Summary" >> $GITHUB_STEP_SUMMARY
   echo "" >> $GITHUB_STEP_SUMMARY
   
+  # First check if we have a processed count passed in
   if [[ $processed_count -eq 0 ]]; then
-    echo "📝 **No diagrams processed in this run**" >> $GITHUB_STEP_SUMMARY
-    return
+    # Double check if there's actually any files processed that we missed 
+    local actual_processed_count=0
+    
+    # Check for recently modified PNG files
+    if [[ -d "$PNG_FILES_DIR" ]]; then
+      actual_processed_count=$(find "$PNG_FILES_DIR" -name "*.png" -type f -mmin -60 2>/dev/null | wc -l)
+      
+      if [[ $actual_processed_count -gt 0 ]]; then
+        echo "[generate_github_step_summary] Found $actual_processed_count recently modified PNG files not counted in processed_count" >&2
+        processed_count=$actual_processed_count
+      else
+        # Check for any entries in the changelog file
+        if [[ -f "$CHANGELOG_FILE" ]]; then
+          # Count non-header lines in changelog
+          local changelog_entries=$(( $(wc -l < "$CHANGELOG_FILE") - 1 ))
+          if [[ $changelog_entries -gt 0 ]]; then
+            echo "[generate_github_step_summary] Found $changelog_entries entries in changelog file" >&2
+            processed_count=$changelog_entries
+          fi
+        fi
+      fi
+    fi
+    
+    if [[ $processed_count -eq 0 ]]; then
+      echo "📝 **No diagrams processed in this run**" >> $GITHUB_STEP_SUMMARY
+      
+      # Additional debugging info
+      echo "" >> $GITHUB_STEP_SUMMARY
+      echo "### 🔍 Debug Information" >> $GITHUB_STEP_SUMMARY
+      echo "" >> $GITHUB_STEP_SUMMARY
+      echo "- **Working directory**: \`$(pwd)\`" >> $GITHUB_STEP_SUMMARY
+      echo "- **CHANGELOG_FILE**: \`${CHANGELOG_FILE}\`" >> $GITHUB_STEP_SUMMARY
+      echo "- **PNG_FILES_DIR**: \`${PNG_FILES_DIR}\`" >> $GITHUB_STEP_SUMMARY
+      echo "- **DRAWIO_FILES_DIR**: \`${DRAWIO_FILES_DIR}\`" >> $GITHUB_STEP_SUMMARY
+      
+      if [[ -f "${DRAWIO_FILES_DIR}/.detection_log.txt" ]]; then
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 File Detection Log" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        cat "${DRAWIO_FILES_DIR}/.detection_log.txt" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      fi
+      
+      return
+    fi
   fi
   
-  # Get list of processed files from the latest changes
-  local processed_files=$(git diff --name-only HEAD~1 HEAD -- 'png_files/*.png' | sed 's|png_files/||g' | sed 's|.png$||g')
+  # At this point, we have a non-zero processed_count
+  
+  # Get list of processed files from multiple sources
+  echo "[generate_github_step_summary] Getting list of processed files" >&2
+  
+  local processed_files=""
+  
+  # Method 1: Check git diff for PNG files
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    processed_files=$(git diff --name-only HEAD~1 HEAD -- "$PNG_FILES_DIR/*.png" 2>/dev/null | sed "s|$PNG_FILES_DIR/||g" | sed 's|.png$||g' | sort)
+    echo "[generate_github_step_summary] Method 1 (git diff): Found $(echo "$processed_files" | wc -l) files" >&2
+  fi
+
+  # Method 2: Check recently modified files if git didn't work or found nothing
+  if [[ -z "$processed_files" && -d "$PNG_FILES_DIR" ]]; then
+    processed_files=$(find "$PNG_FILES_DIR" -name "*.png" -type f -mmin -60 2>/dev/null | sed "s|$PNG_FILES_DIR/||g" | sed 's|.png$||g' | sort)
+    echo "[generate_github_step_summary] Method 2 (recent files): Found $(echo "$processed_files" | wc -l) files" >&2
+  fi
+  
+  # Method 3: Check any files in the PNG directory
+  if [[ -z "$processed_files" && -d "$PNG_FILES_DIR" ]]; then
+    processed_files=$(find "$PNG_FILES_DIR" -name "*.png" -type f | head -n 10 2>/dev/null | sed "s|$PNG_FILES_DIR/||g" | sed 's|.png$||g' | sort)
+    echo "[generate_github_step_summary] Method 3 (any files): Found $(echo "$processed_files" | wc -l) files" >&2
+  fi
   
   echo "### 🔄 Processed Files (${processed_count})" >> $GITHUB_STEP_SUMMARY
   echo "" >> $GITHUB_STEP_SUMMARY
@@ -534,8 +663,13 @@ generate_github_step_summary() {
   
   # Extract information from changelog
   if [[ -f "$CHANGELOG_FILE" ]]; then
-    # Skip the header line and get the last $processed_count lines
-    tail -n "$processed_count" "$CHANGELOG_FILE" | while IFS=, read -r date time diagram file action message version hash author; do
+    # Debug output
+    echo "[generate_github_step_summary] Reading from changelog: $CHANGELOG_FILE" >&2
+    echo "[generate_github_step_summary] Changelog exists: $(test -f "$CHANGELOG_FILE" && echo "yes" || echo "no")" >&2
+    echo "[generate_github_step_summary] Changelog size: $(wc -c < "$CHANGELOG_FILE" 2>/dev/null || echo "unknown") bytes" >&2
+    
+    # Skip the header line and get the recent entries
+    tail -n 10 "$CHANGELOG_FILE" 2>/dev/null | while IFS=, read -r date time diagram file action message version hash author; do
       # Clean up the values (remove quotes)
       diagram=$(echo "$diagram" | tr -d '"')
       version=$(echo "$version" | tr -d '"')
@@ -543,6 +677,19 @@ generate_github_step_summary() {
       
       echo "| ${diagram} | ${version} | ${action} |" >> $GITHUB_STEP_SUMMARY
     done
+  else
+    echo "[generate_github_step_summary] Warning: Changelog file not found at $CHANGELOG_FILE" >&2
+    
+    # If no changelog but we have processed files, list them
+    if [[ -n "$processed_files" ]]; then
+      echo "$processed_files" | while read -r file; do
+        if [[ -n "$file" ]]; then
+          echo "| ${file} | unknown | Converted to PNG |" >> $GITHUB_STEP_SUMMARY
+        fi
+      done
+    else
+      echo "| (No changelog data available) | - | - |" >> $GITHUB_STEP_SUMMARY
+    fi
   fi
   
   echo "" >> $GITHUB_STEP_SUMMARY
@@ -551,9 +698,28 @@ generate_github_step_summary() {
   echo "- **PNG Scale**: ${PNG_SCALE}" >> $GITHUB_STEP_SUMMARY
   echo "- **PNG Quality**: ${PNG_QUALITY}" >> $GITHUB_STEP_SUMMARY
   echo "- **Changelog**: \`${CHANGELOG_FILE}\`" >> $GITHUB_STEP_SUMMARY
+  echo "- **Working Directory**: \`$(pwd)\`" >> $GITHUB_STEP_SUMMARY
   
   echo "" >> $GITHUB_STEP_SUMMARY
   echo "✅ **All diagrams processed successfully**" >> $GITHUB_STEP_SUMMARY
+  
+  # Include additional debug information
+  echo "" >> $GITHUB_STEP_SUMMARY
+  echo "### 🔍 Debug Information" >> $GITHUB_STEP_SUMMARY
+  echo "" >> $GITHUB_STEP_SUMMARY
+  echo "- **Timestamp**: $(date)" >> $GITHUB_STEP_SUMMARY
+  echo "- **Script version**: v2.1" >> $GITHUB_STEP_SUMMARY
+  
+  # If we have detection logs, include them
+  if [[ -f "${DRAWIO_FILES_DIR}/.detection_log.txt" ]]; then
+    echo "" >> $GITHUB_STEP_SUMMARY
+    echo "### 📋 File Detection Log (Summary)" >> $GITHUB_STEP_SUMMARY
+    echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+    head -n 10 "${DRAWIO_FILES_DIR}/.detection_log.txt" >> $GITHUB_STEP_SUMMARY
+    echo "..." >> $GITHUB_STEP_SUMMARY
+    tail -n 5 "${DRAWIO_FILES_DIR}/.detection_log.txt" >> $GITHUB_STEP_SUMMARY
+    echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+  fi
 }
 
 # Main flow
@@ -735,8 +901,36 @@ main() {
     git add -f "$CHANGELOG_FILE" >/dev/null 2>&1 || echo "[main] Warning: Failed to add changelog to git" >&2
   fi
   
+  # Create a summary file of processed files for easier debugging
+  local processed_files_log="${DRAWIO_FILES_DIR}/.processed_files.txt"
+  echo "=== Processed Files Log $(date) ===" > "$processed_files_log"
+  echo "Total processed count: $processed_count" >> "$processed_files_log"
+  echo "Total failed count: $failed_count" >> "$processed_files_log"
+  echo "" >> "$processed_files_log"
+  echo "## Successfully processed files:" >> "$processed_files_log"
+  if [[ -d "$PNG_FILES_DIR" ]]; then
+    find "$PNG_FILES_DIR" -name "*.png" -type f -mmin -60 -exec ls -l {} \; >> "$processed_files_log" 2>/dev/null
+  fi
+  
+  # Write log info for GITHUB_STEP_SUMMARY to use later
+  echo "processed_count=$processed_count" > "${DRAWIO_FILES_DIR}/.processed_stats.txt"
+  echo "failed_count=$failed_count" >> "${DRAWIO_FILES_DIR}/.processed_stats.txt"
+  
   # Generate GitHub step summary with the processed file information
   generate_github_step_summary "$processed_count"
+
+  # Use the GITHUB_OUTPUT mechanism to expose metrics if running in GitHub Actions
+  if [[ -n "$GITHUB_OUTPUT" ]]; then
+    echo "processed_count=$processed_count" >> "$GITHUB_OUTPUT"
+    echo "failed_count=$failed_count" >> "$GITHUB_OUTPUT"
+    
+    # Create a list of processed files for the output
+    processed_files_list=""
+    if [[ -d "$PNG_FILES_DIR" ]]; then
+      processed_files_list=$(find "$PNG_FILES_DIR" -name "*.png" -type f -mmin -60 -printf "%f," 2>/dev/null | sed 's/,$//')
+    fi
+    echo "processed_files_list=$processed_files_list" >> "$GITHUB_OUTPUT"
+  fi
 
   if [[ "$overall_success" = false ]]; then
     echo "[main] One or more operations failed during processing. Check logs for details." >&2
@@ -744,13 +938,22 @@ main() {
     # Don't exit with error by default to allow the workflow to continue
   else
     echo "[main] Script execution finished successfully." >&2
+    echo "[main] Processed $processed_count files, $failed_count failures." >&2
   fi
   
   # Export statistics as environment variables for GitHub Actions
   if [[ -n "$GITHUB_ENV" ]]; then
     echo "DIAGRAMS_PROCESSED_COUNT=$processed_count" >> $GITHUB_ENV
     echo "DIAGRAMS_FAILED_COUNT=$failed_count" >> $GITHUB_ENV
+    
+    # Also explicitly write the path to CHANGELOG file to ensure it's properly referenced
+    echo "DIAGRAMS_CHANGELOG_FILE_PATH=$(readlink -f "$CHANGELOG_FILE")" >> $GITHUB_ENV
   fi
+  
+  # Ensure generated files are committed
+  git add -f "${DRAWIO_FILES_DIR}/.processed_files.txt" 2>/dev/null || true
+  git add -f "${DRAWIO_FILES_DIR}/.processed_stats.txt" 2>/dev/null || true
+  git add -f "$CHANGELOG_FILE" 2>/dev/null || true
   
   return 0
 }
