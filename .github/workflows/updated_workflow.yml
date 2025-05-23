@@ -3,7 +3,7 @@ name: Draw.io Files Processing
 on:
   push:
     paths:
-      - 'drawio_files/**/*.drawio'
+      - 'drawio_files/*.drawio'
   workflow_dispatch:
     inputs:
       specific_file:
@@ -79,29 +79,23 @@ jobs:
           mkdir -p ./drawio_files
           echo "Output directories ensured."
 
-      - name: Check for Existing Diagrams
+      - name: Find Diagrams
+        id: find_diagrams
         shell: bash
         run: |
-          echo "Checking existing diagrams to process..."
-          
-          # Instead of creating test files, use existing files in the repository
-          EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | head -n 5 | tr '\n' ' ')
-          
-          # Also check for files without extension
-          NON_EXTENSION_FILES=$(find drawio_files -type f -not -name "*.*" ! -path "*/.*" | head -n 2 | tr '\n' ' ')
-          
-          if [ -n "$EXISTING_FILES" ] || [ -n "$NON_EXTENSION_FILES" ]; then
-            CHANGED_FILES="$EXISTING_FILES $NON_EXTENSION_FILES"
-            echo "Found existing files to process: $CHANGED_FILES"
+          echo "Detecting diagrams to process..."
+          if [ -n "${{ github.event.inputs.specific_file }}" ]; then
+            CHANGED_FILES="${{ github.event.inputs.specific_file }}"
           else
-            echo "No existing files found. Creating a placeholder."
-            PLACEHOLDER="drawio_files/placeholder.drawio"
-            echo '<mxfile><diagram name="Placeholder">dZHBDoMgDIafhrtC5uLcnJs7efBMRCZkKGhYts3HTwXmkm1JL037f/1pKcQ0b/ea1cWBOSghfVcUYiZk6McpySiDCvcKVkVFcW3jPT4vuHgBwkmIbYu9UxL8IGuUDiOTDDkIe2Bju4SM+UOw3EF6ngQ7vSLbIukzznboLJhlzonekqklOct5qQM/rTl9Cdtdpzt7modNwLwo+hX88B6Ulu37BfkH</diagram></mxfile>' > "$PLACEHOLDER"
-            CHANGED_FILES="$PLACEHOLDER"
-            echo "Created placeholder: $CHANGED_FILES"
+            CHANGED_FILES=$(find drawio_files -maxdepth 1 -name "*.drawio" -type f | tr '\n' ' ')
           fi
           
-          echo "Setting CHANGED_FILES to process"
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No .drawio files found to process"
+            exit 0
+          fi
+          
+          echo "Found files to process: $CHANGED_FILES"
           echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
 
       - name: Process Draw.io files
@@ -113,81 +107,10 @@ jobs:
           # Create necessary directories
           mkdir -p drawio_files png_files
           
-          # Determine changed files with more extensive logging
-          echo "=== Begin File Detection Phase ==="
-          if [ "${{ github.event_name }}" == "push" ]; then
-            # For push events, compare with the 'before' SHA if available and not all zeros.
-            # If 'before' is all zeros (e.g., new branch), diff against parent of current commit.
-            if [ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]; then
-              echo "New branch or 'before' SHA is zero. Using git diff-tree for SHA ${{ github.sha }}."
-              # This lists files changed in the commit itself relative to its parent(s)
-              CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} -- "drawio_files/**/*.drawio" 2>/dev/null | tr '\n' ' ')
-              echo "Git diff-tree found: [$CHANGED_FILES]"
-            else
-              echo "Push event with 'before' SHA ${{ github.event.before }}. Using git diff."
-              CHANGED_FILES=$(git diff --name-only --diff-filter=AM ${{ github.event.before }} ${{ github.sha }} -- "drawio_files/**/*.drawio" 2>/dev/null | tr '\n' ' ')
-              echo "Git diff found: [$CHANGED_FILES]"
-            fi
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            if [ -n "${{ github.event.inputs.specific_file }}" ]; then
-              SPECIFIC_FILE="${{ github.event.inputs.specific_file }}"
-              if [ -f "$SPECIFIC_FILE" ]; then
-                CHANGED_FILES="$SPECIFIC_FILE"
-                echo "Using specific file from input: $CHANGED_FILES"
-              else
-                echo "Specified file '$SPECIFIC_FILE' not found. Looking for existing drawio files instead."
-                # Find existing drawio files instead of creating test files
-                EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | head -n 5)
-                if [ -n "$EXISTING_FILES" ]; then
-                  CHANGED_FILES="$EXISTING_FILES"
-                  echo "Found existing drawio files to process: $CHANGED_FILES"
-                else
-                  echo "No drawio files found in the repository."
-                fi
-              fi
-            else
-              echo "Workflow dispatch: processing all .drawio files in drawio_files/."
-              # Find all existing drawio files
-              EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | tr '\n' ' ')
-              if [ -n "$EXISTING_FILES" ]; then
-                CHANGED_FILES="$EXISTING_FILES"
-                echo "Found existing drawio files to process: $CHANGED_FILES"
-              else
-                echo "No drawio files found in the repository."
-                CHANGED_FILES=""
-              fi
-            fi
-          else
-            echo "Unrecognized event type: ${{ github.event_name }}. Looking for existing drawio files."
-            # Find existing drawio files
-            EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | tr '\n' ' ')
-            if [ -n "$EXISTING_FILES" ]; then
-              CHANGED_FILES="$EXISTING_FILES"
-              echo "Found existing drawio files to process: $CHANGED_FILES"
-            else
-              echo "No drawio files found in the repository."
-              CHANGED_FILES=""
-            fi
-          fi
-          echo "Final list of files to process: [$CHANGED_FILES]"
-          
-          # Show found files details
-          if [ -n "$CHANGED_FILES" ]; then
-            echo "Details of files to process:"
-            for file in $CHANGED_FILES; do
-              if [ -f "$file" ]; then
-                echo "- $file: $(stat -c '%s bytes, modified %y' "$file")"
-              else
-                echo "- $file: FILE NOT FOUND"
-              fi
-            done
-          fi
-          
-          # Update CHANGED_FILES to use new filenames after renaming
-          CHANGED_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | tr '\n' ' ')
-          echo "Using renamed files for processing: $CHANGED_FILES"
-          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
-          echo "=== End File Detection Phase ==="
+          # Get list of files to process
+          echo "=== Begin Processing Phase ==="
+          CHANGED_FILES=$(find drawio_files -maxdepth 1 -name "*.drawio" -type f | tr '\n' ' ')
+          echo "Found files to process: $CHANGED_FILES"
           
           # Debug environment before running script
           echo "=== Environment Variables ==="
@@ -251,78 +174,12 @@ jobs:
             fi
           done
           
-          # Calculate processing results
-          PROCESSED_COUNT=$(find png_files -name "*.png" -type f -mmin -60 2>/dev/null | wc -l)
-          FAILED_COUNT=0
-          
-          echo "Processing complete. Processed: $PROCESSED_COUNT, Failed: $FAILED_COUNT"
-          
-          # Run the script for any additional processing if needed
-          bash ./scripts/fixed_process_drawio_files.sh || {
-            ERROR_CODE=$?
-            # Check if png was actually created despite error
-            if [ -f "png_files/$(basename "${CHANGED_FILES%.drawio}.png")" ]; then
-              echo "PNG file was created successfully despite error code $ERROR_CODE"
-              # Continue processing as success
-              SCRIPT_EXIT_CODE=0
-            else
-              SCRIPT_EXIT_CODE=$ERROR_CODE
-            fi
-          }
-          echo "Processing script completed with exit code: $SCRIPT_EXIT_CODE"
           echo "=== End Processing Script Execution ==="
           
-          # First check if the script set outputs properly in the env file
-          echo "=== Reading Script Outputs ==="
-          if [ -f "./drawio_files/.processed_stats.txt" ]; then
-            echo "Found processed_stats.txt file:"
-            cat "./drawio_files/.processed_stats.txt"
-            
-            # Read values from the file
-            STATS_PROCESSED_COUNT=$(grep "^processed_count=" ./drawio_files/.processed_stats.txt | cut -d= -f2)
-            STATS_FAILED_COUNT=$(grep "^failed_count=" ./drawio_files/.processed_stats.txt | cut -d= -f2)
-            
-            if [ -n "$STATS_PROCESSED_COUNT" ]; then
-              echo "Using processed count from stats file: $STATS_PROCESSED_COUNT"
-              PROCESSED_COUNT=$STATS_PROCESSED_COUNT
-            else
-              echo "No processed count in stats file"
-            fi
-            
-            if [ -n "$STATS_FAILED_COUNT" ]; then
-              echo "Using failed count from stats file: $STATS_FAILED_COUNT"
-              FAILED_COUNT=$STATS_FAILED_COUNT
-            else
-              echo "No failed count in stats file"
-            fi
-          else
-            echo "No processed_stats.txt file found, will calculate counts ourselves"
-          fi
-          
-          # If we don't have counts from the stats file, calculate manually
-          if [ -z "$PROCESSED_COUNT" ]; then
-            # First check if the env file was updated by the script
-            if [ -n "$DIAGRAMS_PROCESSED_COUNT" ]; then
-              echo "Using processed count from environment: $DIAGRAMS_PROCESSED_COUNT"
-              PROCESSED_COUNT=$DIAGRAMS_PROCESSED_COUNT
-            else
-              # Calculate from filesystem
-              echo "Calculating processed count from filesystem"
-              PROCESSED_COUNT=$(find png_files -name "*.png" -type f -mmin -60 2>/dev/null | wc -l)
-            fi
-          fi
-          
-          if [ -z "$FAILED_COUNT" ]; then
-            # First check if the env file was updated by the script
-            if [ -n "$DIAGRAMS_FAILED_COUNT" ]; then
-              echo "Using failed count from environment: $DIAGRAMS_FAILED_COUNT"
-              FAILED_COUNT=$DIAGRAMS_FAILED_COUNT
-            else
-              # Calculate from filesystem
-              echo "Calculating failed count from filesystem"
-              FAILED_COUNT=$(find png_files -name "*.png.error" -type f -mmin -60 2>/dev/null | wc -l)
-            fi
-          fi
+          # Calculate final counts directly from png output
+          echo "=== Calculating Final Counts ==="
+          PROCESSED_COUNT=$(find png_files -maxdepth 1 -name "*.png" -type f -mmin -5 2>/dev/null | wc -l)
+          FAILED_COUNT=$(find png_files -maxdepth 1 -name "*.png.error" -type f -mmin -5 2>/dev/null | wc -l)
           
           echo "Final counts: PROCESSED_COUNT=$PROCESSED_COUNT, FAILED_COUNT=$FAILED_COUNT"
           echo "=== End Reading Script Outputs ==="
@@ -341,7 +198,7 @@ jobs:
           # Generate processed files list
           PROCESSED_FILES_LIST_FOR_OUTPUT=""
           if [ "$PROCESSED_COUNT" -gt 0 ]; then
-            PROCESSED_FILES_LIST_FOR_OUTPUT=$(find png_files -name "*.png" -type f -mmin -60 2>/dev/null | xargs -n1 basename 2>/dev/null | paste -sd ", " - || echo "Unknown")
+            PROCESSED_FILES_LIST_FOR_OUTPUT=$(find png_files -maxdepth 1 -name "*.png" -type f -mmin -5 2>/dev/null | xargs -n1 basename 2>/dev/null | paste -sd ", " - || echo "Unknown")
           fi
           echo "processed_files_list=$PROCESSED_FILES_LIST_FOR_OUTPUT" >> $GITHUB_OUTPUT
           
@@ -366,9 +223,9 @@ jobs:
           echo "- Successfully processed files: $PROCESSED_COUNT" >> $GITHUB_STEP_SUMMARY
           echo "- Failed conversions: $FAILED_COUNT" >> $GITHUB_STEP_SUMMARY
           echo "### Processed Files:" >> $GITHUB_STEP_SUMMARY
-          find png_files -name "*.png" -type f -mmin -60 2>/dev/null | while read -r file; do echo "- $(basename "$file")" >> $GITHUB_STEP_SUMMARY; done
+          find png_files -maxdepth 1 -name "*.png" -type f -mmin -5 2>/dev/null | while read -r file; do echo "- $(basename "$file")" >> $GITHUB_STEP_SUMMARY; done
           echo "### Failed Conversions:" >> $GITHUB_STEP_SUMMARY
-          find png_files -name "*.png.error" -type f -mmin -60 2>/dev/null | while read -r file; do echo "- $(basename "${file%.error}")" >> $GITHUB_STEP_SUMMARY; done
+          find png_files -maxdepth 1 -name "*.png.error" -type f -mmin -5 2>/dev/null | while read -r file; do echo "- $(basename "${file%.error}")" >> $GITHUB_STEP_SUMMARY; done
           
           # Warnings for failures
           if [ $FAILED_COUNT -gt 0 ]; then
