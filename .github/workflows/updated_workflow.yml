@@ -49,24 +49,29 @@ jobs:
           
       - name: Setup DrawIO
         run: |
-          echo "Installing DrawIO version ${{ env.DIAGRAMS_DRAWIO_VERSION }}"
+          echo "=== Installing DrawIO version ${{ env.DIAGRAMS_DRAWIO_VERSION }} ==="
+          
+          # Install xvfb first
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          echo "✓ Installed xvfb"
+          
+          # Install DrawIO dependencies
+          # Update package list and install dependencies
           sudo apt-get update
           sudo apt-get install -y wget xvfb libgbm1 libnspr4 libnss3 libxss1 \
             libxtst6 libgtk-3-0 libx11-xcb1 libdrm2 \
-            libatk-bridge2.0-0 libsecret-1-0
-          MAX_RETRIES=3
-          RETRY=0
-          DOWNLOAD_SUCCESS=false
-          while [ $RETRY -lt $MAX_RETRIES ] && [ "$DOWNLOAD_SUCCESS" != "true" ]; do
-            echo "Download attempt $(($RETRY+1)) of $MAX_RETRIES"
-            if wget -q https://github.com/jgraph/drawio-desktop/releases/download/v${{ env.DIAGRAMS_DRAWIO_VERSION }}/drawio-amd64-${{ env.DIAGRAMS_DRAWIO_VERSION }}.deb; then
-              DOWNLOAD_SUCCESS=true
-            else
-              RETRY=$(($RETRY+1)); sleep 5
-            fi
-          done
-          if [ "$DOWNLOAD_SUCCESS" != "true" ]; then echo "::error::Failed to download DrawIO"; exit 1; fi
-          sudo apt-get install -y ./drawio-amd64-${{ env.DIAGRAMS_DRAWIO_VERSION }}.deb
+            libatk-bridge2.0-0 libsecret-1-0 chromium-browser
+
+          echo "✓ Installed dependencies"
+          
+          # Download and install DrawIO
+          echo "Downloading DrawIO ${DIAGRAMS_DRAWIO_VERSION}..."
+          wget -O drawio.deb "https://github.com/jgraph/drawio-desktop/releases/download/v${DIAGRAMS_DRAWIO_VERSION}/drawio-amd64-${DIAGRAMS_DRAWIO_VERSION}.deb"
+          sudo dpkg -i drawio.deb || sudo apt-get -f install -y
+          rm drawio.deb
+          
+          echo "✓ Installed DrawIO"
           xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio --no-sandbox --disable-gpu --version || echo "Cannot determine version"
           echo "<mxfile><diagram name='Test'>dZHBDoMgDIafhrtC5uLcnJs7efBMRCZkKGhYts3HTwXmkm1JL037f/1pKcQ0b/ea1cWBOSghfVcUYiZk6McpySiDCvcKVkVFcW3jPT4vuHgBwkmIbYu9UxL8IGuUDiOTDDkIe2Bju4SM+UOw3EF6ngQ7vSLbIukzznboLJhlzonekqklOct5qQM/rTl9Cdtdpzt7modNwLwo+hX88B6Ulu37BfkH</diagram></mxfile>" > /tmp/test.drawio
           mkdir -p /tmp/output
