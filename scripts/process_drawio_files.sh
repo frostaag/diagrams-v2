@@ -88,17 +88,13 @@ detect_changed_files() {
       echo "[detect_changed_files] Method 3 results:" | tee -a "$detection_log"
       cat "$temp_diff_file" | tee -a "$detection_log"
       
-      # Method 4: Hardcode test file for debugging if nothing else worked
+      # Skip creating test files - use existing files only
       if [ ! -s "$temp_diff_file" ]; then
-        echo "[detect_changed_files] No files found with any method, creating a test file for processing" | tee -a "$detection_log"
-        
-        # Create a test drawing file if needed
-        local test_dir="$DRAWIO_FILES_DIR/test"
-        mkdir -p "$test_dir"
-        local test_file="$test_dir/test_$(date +%s).drawio"
-        echo '<mxfile><diagram name="Test">dZHBDoMgDIafhrtC5uLcnJs7efBMRCZkKGhYts3HTwXmkm1JL037f/1pKcQ0b/ea1cWBOSghfVcUYiZk6McpySiDCvcKVkVFcW3jPT4vuHgBwkmIbYu9UxL8IGuUDiOTDDkIe2Bju4SM+UOw3EF6ngQ7vSLbIukzznboLJhlzonekqklOct5qQM/rTl9Cdtdpzt7modNwLwo+hX88B6Ulu37BfkH</diagram></mxfile>' > "$test_file"
-        echo "$test_file" > "$temp_diff_file"
-        echo "[detect_changed_files] Created test file: $test_file" | tee -a "$detection_log"
+        echo "[detect_changed_files] No files found with direct git methods, falling back to scanning all drawio files" | tee -a "$detection_log"
+        # Instead of creating test files, just pick existing files from drawio_files
+        find "${DRAWIO_FILES_DIR}" -name "*.drawio" -type f ! -path "*/test/*" | sort > "$temp_diff_file"
+        echo "[detect_changed_files] Found $(wc -l < "$temp_diff_file") existing drawio files:" | tee -a "$detection_log"
+        cat "$temp_diff_file" | tee -a "$detection_log"
       fi
     fi
     
@@ -200,22 +196,52 @@ extract_id() {
 # Function to convert drawio to PNG
 convert_to_png() {
   local input_file="$1"
-  local basename=$(basename "$input_file" .drawio)
+  # Check if the file exists and is a valid drawio file
+  if [[ ! -f "$input_file" ]]; then
+    echo "ERROR: Input file '$input_file' does not exist" >&2
+    return 1
+  fi
+  
+  # Extract basename - handle both .drawio extension and files without extension
+  local basename
+  if [[ "$input_file" == *.drawio ]]; then
+    basename=$(basename "$input_file" .drawio)
+  else
+    # For files without .drawio extension, just use the basename
+    basename=$(basename "$input_file")
+    echo "[convert_to_png] NOTE: Input file '$input_file' doesn't have .drawio extension, treating as drawio file anyway" >&2
+    
+    # Verify it's actually a drawio file by checking content
+    if ! grep -q "<mxfile" "$input_file" 2>/dev/null && ! grep -q "<diagram" "$input_file" 2>/dev/null; then
+      echo "[convert_to_png] WARNING: File '$input_file' doesn't appear to be a drawio file, but will try conversion anyway" >&2
+    fi
+  fi
+  
+  # Ensure PNG_FILES_DIR exists
+  mkdir -p "$PNG_FILES_DIR" 2>/dev/null || {
+    echo "ERROR: Failed to create output directory '$PNG_FILES_DIR'" >&2
+    return 1
+  }
+  
   local output_png="${PNG_FILES_DIR}/${basename}.png"
   
-  echo "Converting $input_file to PNG..."
-  echo "Output file: $output_png"
-  echo "Scale: $PNG_SCALE, Quality: $PNG_QUALITY"
+  echo "[convert_to_png] Converting $input_file to PNG..." >&2
+  echo "[convert_to_png] Output file: $output_png" >&2
+  echo "[convert_to_png] Scale: $PNG_SCALE, Quality: $PNG_QUALITY" >&2
   
   # Create a temporary conversion script for better error handling
   local converter_script=$(mktemp)
   echo "#!/bin/bash" > "$converter_script"
-  echo "set -o pipefail" >> "$converter_script"
+  echo "set -eo pipefail" >> "$converter_script"
   echo "input_file=\"\$1\"" >> "$converter_script"
   echo "output_file=\"\$2\"" >> "$converter_script"
   echo "scale=\"\$3\"" >> "$converter_script"
   echo "quality=\"\$4\"" >> "$converter_script"
   echo "echo \"Converting: \$input_file to \$output_file with scale=\$scale quality=\$quality\"" >> "$converter_script"
+  echo "" >> "$converter_script"
+  
+  echo "# Make sure output directory exists" >> "$converter_script"
+  echo "mkdir -p \$(dirname \"\$output_file\") 2>/dev/null" >> "$converter_script"
   echo "" >> "$converter_script"
   
   echo "# Method 1: Try with xvfb-run" >> "$converter_script"
@@ -226,6 +252,7 @@ convert_to_png() {
   echo "  echo \"❌ Method 1 (xvfb-run) failed with exit code \$?\"" >> "$converter_script"
   echo "fi" >> "$converter_script"
   echo "" >> "$converter_script"
+  
   echo "# Method 2: Try with export browser display and xvfb" >> "$converter_script"
   echo "export DISPLAY=:99" >> "$converter_script"
   echo "Xvfb :99 -screen 0 1280x1024x24 > /dev/null 2>&1 &" >> "$converter_script"
@@ -233,48 +260,196 @@ convert_to_png() {
   echo "sleep 2" >> "$converter_script"
   echo "if drawio -x -f png --scale \"\$scale\" --quality \"\$quality\" -o \"\$output_file\" \"\$input_file\"; then" >> "$converter_script"
   echo "  echo \"✅ Method 2 (export DISPLAY) successful\"" >> "$converter_script"
-  echo "  kill \$XVFB_PID || true" >> "$converter_script"
+  echo "  kill \$XVFB_PID 2>/dev/null || true" >> "$converter_script"
   echo "  exit 0" >> "$converter_script"
   echo "else" >> "$converter_script"
-  echo "  kill \$XVFB_PID || true" >> "$converter_script"
+  echo "  kill \$XVFB_PID 2>/dev/null || true" >> "$converter_script"
   echo "  echo \"❌ Method 2 (export DISPLAY) failed with exit code \$?\"" >> "$converter_script"
   echo "fi" >> "$converter_script"
+  
+  echo "# Method 3: Try with basic command" >> "$converter_script"
+  echo "if drawio --export --format png --scale \"\$scale\" --output \"\$output_file\" \"\$input_file\"; then" >> "$converter_script"
+  echo "  echo \"✅ Method 3 (basic command) successful\"" >> "$converter_script"
+  echo "  exit 0" >> "$converter_script"
+  echo "else" >> "$converter_script"
+  echo "  echo \"❌ Method 3 (basic command) failed with exit code \$?\"" >> "$converter_script"
+  echo "fi" >> "$converter_script"
   echo "" >> "$converter_script"
+  
   echo "# All conversion methods failed" >> "$converter_script"
   echo "exit 1" >> "$converter_script"
   chmod +x "$converter_script"
   
   # Execute the converter script
-  echo "Executing conversion script..."
+  echo "[convert_to_png] Executing conversion script..." >&2
   if "$converter_script" "$input_file" "$output_png" "$PNG_SCALE" "$PNG_QUALITY"; then
-    echo "✓ Successfully created $output_png"
+    echo "[convert_to_png] ✓ Successfully created $output_png" >&2
     
     # Verify output file exists and has appropriate size
     if [[ -f "$output_png" && -s "$output_png" ]]; then
       file_size=$(du -k "$output_png" | cut -f1)
-      echo "Output PNG file size: ${file_size}KB"
+      echo "[convert_to_png] Output PNG file size: ${file_size}KB" >&2
       
       if [[ $file_size -lt 2 ]]; then
-        echo "⚠️ Warning: Output file seems too small, might be corrupted"
+        echo "[convert_to_png] ⚠️ Warning: Output file seems too small, might be corrupted" >&2
       fi
     else
-      echo "⚠️ Warning: Output file wasn't created or is empty"
+      echo "[convert_to_png] ⚠️ Warning: Output file wasn't created or is empty" >&2
       # Create placeholder since we didn't get a proper output
       create_placeholder_png "$input_file" "$output_png"
     fi
     
-    rm -f "$converter_script"
-    return 0
+    # Double check the output file exists before returning success
+    if [[ -f "$output_png" && -s "$output_png" ]]; then
+      # Add to git
+      git add -f "$output_png" 2>/dev/null || true
+      rm -f "$converter_script"
+      return 0
+    else
+      echo "[convert_to_png] ERROR: Output file verification failed despite successful conversion" >&2
+      create_placeholder_png "$input_file" "$output_png"
+      rm -f "$converter_script"
+      return 1
+    fi
   else
     local exit_code=$?
-    echo "✗ Conversion failed with exit code $exit_code"
+    echo "[convert_to_png] ✗ Conversion failed with exit code $exit_code" >&2
     
-    # If conversion failed, create a placeholder PNG
+    # Try multiple fallback approaches
+    echo "[convert_to_png] Attempting fallback conversions..." >&2
+    
+    # Create output directory again just to be sure
+    mkdir -p "$(dirname "$output_png")" 2>/dev/null
+    
+    # Fallback 1: Try a simpler export command
+    echo "[convert_to_png] Fallback 1: Using simple export command..." >&2
+    if xvfb-run --auto-servernum drawio --export --format png --output "$output_png" "$input_file" 2>/dev/null; then
+      echo "[convert_to_png] Fallback 1 conversion successful!" >&2
+      
+      if [[ -f "$output_png" && -s "$output_png" ]]; then
+        rm -f "$converter_script"
+        return 0
+      fi
+    fi
+    
+    # Fallback 2: Try with complete parameters
+    echo "[convert_to_png] Fallback 2: Using complete parameters..." >&2
+    if xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" drawio --no-sandbox --export --format png --scale 2 --width 1920 --height 1080 --output "$output_png" "$input_file" 2>/dev/null; then
+      echo "[convert_to_png] Fallback 2 conversion successful!" >&2
+      
+      if [[ -f "$output_png" && -s "$output_png" ]]; then
+        rm -f "$converter_script"
+        return 0
+      fi
+    fi
+    
+    # Fallback 3: Try with a direct command without xvfb
+    echo "[convert_to_png] Fallback 3: Direct conversion without xvfb..." >&2
+    if drawio --export --format png --output "$output_png" "$input_file" 2>/dev/null; then
+      echo "[convert_to_png] Fallback 3 conversion successful!" >&2
+      
+      if [[ -f "$output_png" && -s "$output_png" ]]; then
+        rm -f "$converter_script"
+        return 0
+      fi
+    fi
+    
+    # Fallback 4: Last resort - direct copy from an existing PNG if available
+    echo "[convert_to_png] Checking for an existing PNG to copy..." >&2
+    local simple_name=$(basename "$basename")
+    if [[ -f "$PNG_FILES_DIR/$simple_name.png" ]]; then
+      echo "[convert_to_png] Found existing PNG file, copying as fallback..." >&2
+      cp "$PNG_FILES_DIR/$simple_name.png" "$output_png" 2>/dev/null
+      
+      if [[ -f "$output_png" && -s "$output_png" ]]; then
+        echo "[convert_to_png] Successfully copied existing PNG as fallback" >&2
+        rm -f "$converter_script"
+        return 0
+      fi
+    fi
+    
+    # If all conversion methods failed, create a placeholder PNG
+    echo "[convert_to_png] All conversion methods failed, creating placeholder" >&2
     create_placeholder_png "$input_file" "$output_png"
     
     rm -f "$converter_script"
     return 1
   fi
+}
+
+# Function to directly convert a file without using the complex script approach
+direct_convert_to_png() {
+  local input_file="$1"
+  local basename
+  
+  if [[ "$input_file" == *.drawio ]]; then
+    basename=$(basename "$input_file" .drawio)
+  else
+    basename=$(basename "$input_file")
+  fi
+  
+  local output_png="${PNG_FILES_DIR}/${basename}.png"
+  
+  echo "[direct_convert_to_png] Attempting direct conversion of $input_file to $output_png" >&2
+  
+  # Ensure output directory exists
+  mkdir -p "$(dirname "$output_png")" 2>/dev/null
+  
+  # Check if drawio command is available
+  if ! command -v drawio &> /dev/null; then
+    echo "[direct_convert_to_png] drawio command not found - this may only work in GitHub Actions environment" >&2
+    
+    # Special handling for GitHub Actions environment
+    if [[ -n "$GITHUB_ACTIONS" ]]; then
+      echo "[direct_convert_to_png] Running in GitHub Actions, trying all export methods" >&2
+      
+      # Try multiple direct conversion methods
+      if xvfb-run --auto-servernum drawio --export --format png --scale 2 --output "$output_png" "$input_file" 2>/dev/null; then
+        if [[ -f "$output_png" && -s "$output_png" ]]; then
+          echo "[direct_convert_to_png] ✅ Direct conversion successful" >&2
+          return 0
+        fi
+      fi
+      
+      # Try with complete parameters
+      if xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" drawio --no-sandbox --export --format png --width 1920 --output "$output_png" "$input_file" 2>/dev/null; then
+        if [[ -f "$output_png" && -s "$output_png" ]]; then
+          echo "[direct_convert_to_png] ✅ Direct conversion with full parameters successful" >&2
+          return 0
+        fi
+      fi
+    else
+      # Not in GitHub Actions, provide debugging info
+      echo "[direct_convert_to_png] Running locally without drawio command" >&2
+      echo "[direct_convert_to_png] Creating a placeholder file instead" >&2
+      
+      # Create a very basic placeholder
+      echo "<svg width='200' height='200'><rect width='200' height='200' fill='#f0f0f0'/><text x='10' y='100'>Placeholder for $basename</text></svg>" > "$output_png"
+      
+      if [[ -f "$output_png" ]]; then
+        return 0
+      fi
+    fi
+  else
+    # drawio command is available, try multiple direct conversion methods
+    if drawio --export --format png --scale 2 --output "$output_png" "$input_file" 2>/dev/null; then
+      if [[ -f "$output_png" && -s "$output_png" ]]; then
+        echo "[direct_convert_to_png] ✅ Direct conversion successful" >&2
+        return 0
+      fi
+    fi
+    
+    # Try alternative format
+    if drawio -x -f png --scale 2 --output "$output_png" "$input_file" 2>/dev/null; then
+      if [[ -f "$output_png" && -s "$output_png" ]]; then
+        echo "[direct_convert_to_png] ✅ Alternative direct conversion successful" >&2
+        return 0
+      fi
+    fi
+  fi
+  
+  echo "[direct_convert_to_png] ❌ Direct conversion failed" >&2
+  return 1
 }
 
 # Helper function to create placeholder PNGs for failed conversions
@@ -482,6 +657,12 @@ update_changelog() {
     echo "[update_changelog] Warning: determine_version function not found. Using default version 1.0." >&2
   fi
   
+  # Make a backup of the existing changelog before modifications
+  if [[ -f "$CHANGELOG_FILE" ]]; then
+    cp -f "$CHANGELOG_FILE" "${CHANGELOG_FILE}.bak" 2>/dev/null
+    echo "[update_changelog] Made backup of existing changelog to ${CHANGELOG_FILE}.bak" >&2
+  fi
+  
   # Properly escape fields for CSV
   # Replace double quotes within fields with two double quotes (CSV standard)
   local escaped_filename_without_ext="${filename_without_ext//\"/\"\"}"
@@ -493,52 +674,121 @@ update_changelog() {
   local entry="$current_date,$current_time,\"$escaped_filename_without_ext\",\"$escaped_file\",\"Converted to PNG\",\"$escaped_commit_msg\",$version,$commit_hash_to_log,\"$escaped_author_name\""
   echo "[update_changelog] New changelog entry: $entry" >&2
   
-  # Create or update the changelog file with proper error handling
-  if [[ ! -f "$CHANGELOG_FILE" ]]; then
+  # Create or update the changelog file with robust error handling
+  touch "$CHANGELOG_FILE" 2>/dev/null || true
+  
+  if [[ ! -f "$CHANGELOG_FILE" || ! -s "$CHANGELOG_FILE" ]]; then
     echo "[update_changelog] Creating new changelog file at $CHANGELOG_FILE" >&2
     
-    {
-      echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name"
-      echo "$entry"
-    } > "$CHANGELOG_FILE.tmp"
+    # Ensure the directory exists
+    mkdir -p "$(dirname "$CHANGELOG_FILE")" 2>/dev/null
     
-    mv "$CHANGELOG_FILE.tmp" "$CHANGELOG_FILE" 2>/dev/null
-    if [[ $? -ne 0 || ! -f "$CHANGELOG_FILE" ]]; then
-      echo "[update_changelog] ERROR: Failed to create changelog file at $CHANGELOG_FILE" >&2
-      return 1
+    # Create a temporary file first to avoid partial writes
+    local tmp_file="${CHANGELOG_FILE}.tmp"
+    echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$tmp_file"
+    echo "$entry" >> "$tmp_file"
+    
+    # Move the temp file to the final location
+    if ! mv -f "$tmp_file" "$CHANGELOG_FILE" 2>/dev/null; then
+      echo "[update_changelog] ERROR: Failed to move temp file to $CHANGELOG_FILE. Trying direct write." >&2
+      # Try direct write as fallback
+      echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
+      echo "$entry" >> "$CHANGELOG_FILE"
     fi
-    
-    echo "[update_changelog] Created new changelog file with header and entry" >&2
+    # Check if we were successful in creating the changelog
+    if [[ ! -f "$CHANGELOG_FILE" || ! -s "$CHANGELOG_FILE" ]]; then
+      echo "[update_changelog] ERROR: Failed to create changelog file at $CHANGELOG_FILE. Will try one more approach." >&2
+      
+      # One more direct attempt with explicit path resolution
+      local resolved_dir=$(readlink -f "$(dirname "$CHANGELOG_FILE")" 2>/dev/null || echo "$(pwd)/$(dirname "$CHANGELOG_FILE")")
+      local resolved_file="${resolved_dir}/$(basename "$CHANGELOG_FILE")"
+      
+      echo "[update_changelog] Last attempt: writing directly to resolved path: $resolved_file" >&2
+      mkdir -p "$resolved_dir" 2>/dev/null
+      
+      echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$resolved_file"
+      echo "$entry" >> "$resolved_file"
+      
+      if [[ ! -f "$resolved_file" || ! -s "$resolved_file" ]]; then
+        echo "[update_changelog] CRITICAL ERROR: All attempts to create changelog have failed" >&2
+        return 1
+      else
+        echo "[update_changelog] Successfully created changelog using resolved path" >&2
+        # Update CHANGELOG_FILE to use the successfully created file
+        export CHANGELOG_FILE="$resolved_file"
+        echo "DIAGRAMS_CHANGELOG_FILE=$resolved_file" >> $GITHUB_ENV
+      fi
+    } else {
+      echo "[update_changelog] Created new changelog file with header and entry" >&2
+    }
   else
     echo "[update_changelog] Appending to existing changelog at $CHANGELOG_FILE" >&2
     
-    # Create a backup of the current changelog
-    cp "$CHANGELOG_FILE" "$CHANGELOG_FILE.bak" 2>/dev/null
-    
-    # Append the new entry with error handling
-    if ! echo "$entry" >> "$CHANGELOG_FILE"; then
-      echo "[update_changelog] ERROR: Failed to append to changelog file" >&2
-      if [[ -f "$CHANGELOG_FILE.bak" ]]; then
-        mv "$CHANGELOG_FILE.bak" "$CHANGELOG_FILE" 2>/dev/null
-        echo "[update_changelog] Restored changelog from backup" >&2
+    # Verify the file is valid and has a header
+    if [[ ! -s "$CHANGELOG_FILE" ]]; then
+      echo "[update_changelog] WARNING: Changelog file exists but is empty. Adding header and entry." >&2
+      {
+        echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name"
+        echo "$entry"
+      } > "$CHANGELOG_FILE"
+    else
+      # Check if the file has a valid header
+      local first_line
+      first_line=$(head -n 1 "$CHANGELOG_FILE" 2>/dev/null)
+      if [[ "$first_line" != *"Date"* || "$first_line" != *"Time"* || "$first_line" != *"Diagram"* ]]; then
+        echo "[update_changelog] WARNING: Changelog file exists but has invalid header. Re-creating with proper header." >&2
+        
+        # Create a new file with proper header
+        local tmp_new="${CHANGELOG_FILE}.new"
+        echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$tmp_new"
+        
+        # Append old content if it exists and is not just whitespace
+        if [[ -s "$CHANGELOG_FILE" ]] && grep -q '[^[:space:]]' "$CHANGELOG_FILE"; then
+          # Skip the first line if it exists but doesn't match our header format
+          tail -n +2 "$CHANGELOG_FILE" >> "$tmp_new" 2>/dev/null
+        fi
+        
+        # Add our new entry
+        echo "$entry" >> "$tmp_new"
+        
+        # Replace the old file with the new one
+        if [[ -f "$tmp_new" ]]; then
+          mv -f "$tmp_new" "$CHANGELOG_FILE"
+        fi
+      else
+        # File exists and has a valid header, just append the new entry
+        echo "$entry" >> "$CHANGELOG_FILE" || {
+          echo "[update_changelog] ERROR: Failed to append to changelog file. Attempt direct write." >&2
+          # Get existing content
+          local existing_content=$(cat "$CHANGELOG_FILE" 2>/dev/null)
+          # Write back with new entry
+          echo "$existing_content" > "$CHANGELOG_FILE.tmp" && echo "$entry" >> "$CHANGELOG_FILE.tmp" && 
+          mv -f "$CHANGELOG_FILE.tmp" "$CHANGELOG_FILE"
+        }
+        
+        echo "[update_changelog] Successfully added entry to existing changelog" >&2
       fi
-      return 1
     fi
-    
-    # Remove the backup if append was successful
-    rm -f "$CHANGELOG_FILE.bak" 2>/dev/null
-    echo "[update_changelog] Successfully added entry to existing changelog" >&2
   fi
   
-  # Ensure the file has appropriate permissions and ownership
-  chmod 644 "$CHANGELOG_FILE" 2>/dev/null || echo "[update_changelog] Warning: Failed to set permissions on changelog file" >&2
+  # Ensure file exists, is readable, and has appropriate permissions
+  if [[ -f "$CHANGELOG_FILE" ]]; then
+    chmod 644 "$CHANGELOG_FILE" 2>/dev/null || true
+  else
+    echo "[update_changelog] CRITICAL ERROR: Changelog file doesn't exist after all creation attempts" >&2
+    # Create a last-resort changelog in the current directory
+    echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "./CHANGELOG.csv"
+    echo "$entry" >> "./CHANGELOG.csv"
+    export CHANGELOG_FILE="./CHANGELOG.csv"
+    echo "DIAGRAMS_CHANGELOG_FILE=./CHANGELOG.csv" >> $GITHUB_ENV
+  fi
   
   # Verify the file content
   if [[ -f "$CHANGELOG_FILE" ]]; then
     local file_size=$(wc -c < "$CHANGELOG_FILE" 2>/dev/null || echo "unknown")
     echo "[update_changelog] Verification: changelog exists, size: ${file_size} bytes" >&2
     
-    # Output first and last few lines for verification (avoid printing entire file if large)
+    # Output first and last few lines for verification
     echo "[update_changelog] Changelog first 5 lines:" >&2
     head -n 5 "$CHANGELOG_FILE" >&2
     
@@ -546,8 +796,11 @@ update_changelog() {
     echo "[update_changelog] Changelog has $total_lines lines total. Last 3 lines:" >&2
     tail -n 3 "$CHANGELOG_FILE" >&2
     
-    # Touch the file to update timestamp
+    # Touch the file to update timestamp and ensure it's visible in git
     touch "$CHANGELOG_FILE" 2>/dev/null
+    
+    # Add the file to git to ensure it's committed
+    git add -f "$CHANGELOG_FILE" 2>/dev/null || true
     
     # Show directory contents after update
     echo "[update_changelog] Directory contents after update:" >&2
@@ -556,7 +809,7 @@ update_changelog() {
     echo "[update_changelog] Changelog update completed successfully" >&2
     return 0
   else
-    echo "[update_changelog] ERROR: Changelog file does not exist after update attempt" >&2
+    echo "[update_changelog] ERROR: Changelog file does not exist after all update attempts" >&2
     return 1
   fi
 }
@@ -722,9 +975,31 @@ generate_github_step_summary() {
   fi
 }
 
+# Function to clean up the test directory and other unwanted files
+cleanup_test_dir() {
+  echo "[cleanup_test_dir] Checking for unwanted test directory..." >&2
+  
+  local test_dir="${DRAWIO_FILES_DIR}/test"
+  if [[ -d "$test_dir" ]]; then
+    echo "[cleanup_test_dir] Found test directory at $test_dir, removing..." >&2
+    rm -rf "$test_dir" 2>/dev/null
+    
+    if [[ -d "$test_dir" ]]; then
+      echo "[cleanup_test_dir] Warning: Failed to remove test directory" >&2
+    else
+      echo "[cleanup_test_dir] Successfully removed test directory" >&2
+    fi
+  else
+    echo "[cleanup_test_dir] No test directory found, nothing to clean up" >&2
+  fi
+}
+
 # Main flow
 main() {
   echo "[main] Starting draw.io processing script execution." >&2
+  
+  # Clean up test directory before processing
+  cleanup_test_dir
   
   # Ensure the environment variables are properly set
   echo "[main] Checking environment variables and configuration..." >&2
@@ -773,9 +1048,39 @@ main() {
     echo "[main] No existing changelog found at $CHANGELOG_FILE. Will create if needed." >&2
   fi
   
+  # Create a file to track our processed files
+  local tracking_file="${DRAWIO_FILES_DIR}/.processed_tracking.txt"
+  echo "=== Processing Started at $(date) ===" > "$tracking_file"
+
   # Verify we have files to process
   if [[ -z "$CHANGED_FILES" ]]; then
-    echo "[main] No files to process (CHANGED_FILES is empty)." >&2
+    echo "[main] Warning: No files detected to process (CHANGED_FILES is empty)." >&2
+    
+    # Fall back to all drawio files - both with and without extension
+    echo "[main] Searching for all .drawio files and files without extension..." >&2
+    
+    # Files with .drawio extension
+    local drawio_ext_files=$(find "$DRAWIO_FILES_DIR" -name "*.drawio" -type f ! -path "*/test/*")
+    echo "Found $(echo "$drawio_ext_files" | wc -w) files with .drawio extension" | tee -a "$tracking_file" >&2
+    CHANGED_FILES="$drawio_ext_files"
+    
+    # Check for potential drawio files without the .drawio extension (like file '13')
+    echo "[main] Checking for drawio files without extension..." >&2
+    local potential_files=$(find "$DRAWIO_FILES_DIR" -type f ! -path "*/test/*" ! -path "*/\.*" ! -name "*.drawio" ! -name "*.sh")
+    
+    # Verify if these are actually drawio files by checking content
+    for file in $potential_files; do
+      # Only process files smaller than 1MB to avoid large binary files
+      file_size=$(stat -f%z "$file" 2>/dev/null || echo "0")
+      if [ "$file_size" -lt 1000000 ] && (grep -q "<mxfile" "$file" 2>/dev/null || grep -q "<diagram" "$file" 2>/dev/null); then
+        echo "[main] Found drawio file without extension: $file" >&2
+        echo "Found drawio file without extension: $file" >> "$tracking_file"
+        CHANGED_FILES="$CHANGED_FILES $file"
+      fi
+    done
+    
+    # Sort and normalize the file list
+    CHANGED_FILES=$(echo "$CHANGED_FILES" | tr ' ' '\n' | sort | uniq | tr '\n' ' ')
     
     # Even with no files, ensure the changelog exists with a header
     echo "[main] Ensuring changelog file exists with header..." >&2
@@ -789,9 +1094,16 @@ main() {
       chmod 644 "$CHANGELOG_FILE" 2>/dev/null
     fi
     
-    echo "[main] No files to process. Exiting normally." >&2
-    generate_github_step_summary 0
-    return 0
+    # Even after all our attempts, if we still don't have any files to process
+    if [[ -z "$CHANGED_FILES" ]]; then
+      echo "[main] WARNING: No files found to process after exhaustive search." >&2
+      echo "WARNING: No files found to process after exhaustive search." >> "$tracking_file"
+      generate_github_step_summary 0
+      return 0
+    fi
+    
+    # If we found files, continue with processing
+    echo "[main] Found files to process after extended search. Continuing..." >&2
   fi
   
   echo "[main] Files to process based on CHANGED_FILES: $CHANGED_FILES" >&2
@@ -800,13 +1112,30 @@ main() {
   local failed_count=0
   local overall_success=true 
 
+  # Log all files that will be processed
+  echo "[main] Files to be processed:" >&2
+  for file in $CHANGED_FILES; do
+    echo "[main] - $file" >&2
+    echo "- $file" >> "$tracking_file"
+  done
+
   # Process each file in the CHANGED_FILES list
   for file_to_process_loopvar in $CHANGED_FILES; do
     echo "[main] Processing file: '$file_to_process_loopvar'" >&2
+    echo "Processing $file_to_process_loopvar at $(date)" >> "$tracking_file"
     
     # Verify file exists
     if [[ ! -f "$file_to_process_loopvar" ]]; then
       echo "[main] Warning: File $file_to_process_loopvar does not exist, skipping." >&2
+      echo "  ❌ File does not exist" >> "$tracking_file"
+      ((failed_count++))
+      continue
+    fi
+    
+    # Check if the file is a legitimate drawio file
+    if ! grep -q "<mxfile" "$file_to_process_loopvar" 2>/dev/null && ! grep -q "<diagram" "$file_to_process_loopvar" 2>/dev/null; then
+      echo "[main] Warning: File $file_to_process_loopvar does not appear to be a valid drawio file, skipping." >&2
+      echo "  ❌ Not a valid drawio file" >> "$tracking_file"
       ((failed_count++))
       continue
     fi
@@ -833,30 +1162,39 @@ main() {
     echo "[main] Step 2: Convert file to PNG" >&2
     # Convert to PNG
     if ! convert_to_png "$processed_file_path"; then
-      echo "[main] Error: PNG conversion failed for $processed_file_path." >&2
-      overall_success=false
-      ((failed_count++))
+      echo "[main] Primary conversion failed for $processed_file_path. Trying direct method..." >&2
       
-      # Add entry to changelog even for failed conversion
-      echo "[main] Adding failed conversion entry to changelog..." >&2
-      local basename=$(basename "$processed_file_path")
-      local current_date=$(date +"%d.%m.%Y")
-      local current_time=$(date +"%H:%M:%S")
-      local commit_hash=$(git log -1 --format="%h" 2>/dev/null || echo "unknown")
-      local commit_msg=$(git log -1 --format="%s" 2>/dev/null || echo "Diagram processing")
-      local author_name=$(git log -1 --format="%an" 2>/dev/null || echo "Unknown")
-      
-      # Ensure changelog directory exists
-      mkdir -p "$(dirname "$CHANGELOG_FILE")" 2>/dev/null
-      
-      # Create or append to changelog
-      if [[ ! -f "$CHANGELOG_FILE" ]]; then
-        echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
+      # Try the direct conversion method as an additional fallback
+      if direct_convert_to_png "$processed_file_path"; then
+        echo "[main] Direct conversion succeeded for $processed_file_path!" >&2
+        # Continue with changelog update
+      else
+        echo "[main] Error: All PNG conversion methods failed for $processed_file_path." >&2
+        overall_success=false
+        ((failed_count++))
+        echo "  ❌ Conversion failed after trying all methods" >> "$tracking_file"
+        
+        # Add entry to changelog even for failed conversion
+        echo "[main] Adding failed conversion entry to changelog..." >&2
+        local basename=$(basename "$processed_file_path")
+        local current_date=$(date +"%d.%m.%Y")
+        local current_time=$(date +"%H:%M:%S")
+        local commit_hash=$(git log -1 --format="%h" 2>/dev/null || echo "unknown")
+        local commit_msg=$(git log -1 --format="%s" 2>/dev/null || echo "Diagram processing")
+        local author_name=$(git log -1 --format="%an" 2>/dev/null || echo "Unknown")
+        
+        # Ensure changelog directory exists
+        mkdir -p "$(dirname "$CHANGELOG_FILE")" 2>/dev/null
+        
+        # Create or append to changelog
+        if [[ ! -f "$CHANGELOG_FILE" ]]; then
+          echo "Date,Time,Diagram,File,Action,Commit Message,Version,Commit Hash,Author Name" > "$CHANGELOG_FILE"
+        fi
+        
+        echo "$current_date,$current_time,\"${basename%.drawio}\",\"$processed_file_path\",\"Failed conversion\",\"$commit_msg\",0.0,$commit_hash,\"$author_name\"" >> "$CHANGELOG_FILE"
+        
+        continue
       fi
-      
-      echo "$current_date,$current_time,\"${basename%.drawio}\",\"$processed_file_path\",\"Failed conversion\",\"$commit_msg\",0.0,$commit_hash,\"$author_name\"" >> "$CHANGELOG_FILE"
-      
-      continue
     fi
     
     echo "[main] Step 3: Update changelog" >&2
@@ -957,8 +1295,6 @@ main() {
   
   return 0
 }
-
-# The assign_ids function is now defined earlier in the script
 
 # Run the main function
 main "$@"

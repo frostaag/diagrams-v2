@@ -6,8 +6,20 @@ on:
       - 'drawio_files/**/*.drawio'
   workflow_dispatch:
     inputs:
-      specific_file:
-        description: 'Specific file to process (leave empty for all files)'
+      specific_              if [ -f "$SPECIFIC_FILE" ]; then
+                CHANGED_FILES="$SPECIFIC_FILE"
+                echo "Using specific file from input: $CHANGED_FILES"
+              else
+                echo "Specified file '$SPECIFIC_FILE' not found. Looking for existing drawio files instead."
+                # Find existing drawio files instead of creating test files
+                EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | head -n 5)
+                if [ -n "$EXISTING_FILES" ]; then
+                  CHANGED_FILES="$EXISTING_FILES"
+                  echo "Found existing drawio files to process: $CHANGED_FILES"
+                else
+                  echo "No drawio files found in the repository."
+                fi
+              fi  description: 'Specific file to process (leave empty for all files)'
         required: false
         default: ''
 
@@ -80,34 +92,21 @@ jobs:
           mkdir -p ./drawio_files
           echo "Output directories ensured."
 
-      - name: Create Test Diagram
+      # We're not creating test diagrams anymore
+      - name: Check for Existing Diagrams
         shell: bash
         run: |
-          echo "Creating test diagram to ensure processing works..."
-          TEST_DIR="drawio_files/test"
-          mkdir -p "$TEST_DIR"
+          echo "Checking for existing diagrams to process..."
           
-          # Create a simple drawio file with current timestamp so it's always considered new
-          TIMESTAMP=$(date +"%Y%m%d%H%M%S")
-          cat > "$TEST_DIR/test_diagram_$TIMESTAMP.drawio" << 'EOL'
-          <mxfile host="app.diagrams.net" modified="2023-05-25T12:34:56.789Z" agent="Mozilla/5.0" version="21.2.9">
-            <diagram id="test-diagram-id" name="Test Diagram">
-              <mxGraphModel dx="1186" dy="571" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
-                <root>
-                  <mxCell id="0"/>
-                  <mxCell id="1" parent="0"/>
-                  <mxCell id="2" value="Test Diagram&#10;Created by GitHub Action&#10;$TIMESTAMP" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
-                    <mxGeometry x="320" y="240" width="200" height="100" as="geometry"/>
-                  </mxCell>
-                </root>
-              </mxGraphModel>
-            </diagram>
-          </mxfile>
-          EOL
-          
-          echo "Created test diagram at $TEST_DIR/test_diagram_$TIMESTAMP.drawio"
-          echo "Setting CHANGED_FILES to include test file"
-          echo "CHANGED_FILES=$TEST_DIR/test_diagram_$TIMESTAMP.drawio" >> $GITHUB_ENV
+          # Find existing drawio files instead of creating test files
+          EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | sort | head -n 5)
+          if [ -n "$EXISTING_FILES" ]; then
+            echo "Found existing drawio files to process:"
+            echo "$EXISTING_FILES"
+            echo "CHANGED_FILES=$EXISTING_FILES" >> $GITHUB_ENV
+          else
+            echo "No drawio files found in the repository."
+          fi
 
       - name: Process Draw.io files
         id: process_files
@@ -140,35 +139,39 @@ jobs:
                 CHANGED_FILES="$SPECIFIC_FILE"
                 echo "Using specific file from input: $CHANGED_FILES"
               else
-                echo "Specified file '$SPECIFIC_FILE' not found. Creating test file instead."
-                # Create a test diagram for processing
-                mkdir -p drawio_files/test
-                TEST_FILE="drawio_files/test/test_$(date +%s).drawio"
-                echo '<mxfile><diagram name="Auto Test">dZHBEoIgEIafhjtCZnZuVpdOHjozgcyQLAvY6uunITOmS4feZf//2YVdIOmmV41q1YEFaMATfgd2JIRQn9C9D/BwgBMK2mjhkL+Cs7x7GG0BdFU3evYrnHjXwcQnqxrNr+oYreGmpKdKg+AIbOTmLze6p4zxDfbijYbjVZN2W8Soxx7LdIIOrVeGrpvEb8WsVAG6CLVt4F8Bdi8A6JL6On6Y+tLwZ+FPXn/+Fw==</diagram></mxfile>' > "$TEST_FILE"
-                CHANGED_FILES="$TEST_FILE"
-                echo "Created and using test file: $CHANGED_FILES"
+                echo "Specified file '$SPECIFIC_FILE' not found. Looking for existing drawio files instead."
+                # Find existing drawio files instead of creating test files
+                EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | head -n 5)
+                if [ -n "$EXISTING_FILES" ]; then
+                  CHANGED_FILES="$EXISTING_FILES"
+                  echo "Found existing drawio files to process: $CHANGED_FILES"
+                else
+                  echo "No drawio files found in the repository."
+                fi
               fi
             else
               echo "Workflow dispatch: processing all .drawio files in drawio_files/."
-              # Create a test file to ensure we always have something to process
-              mkdir -p drawio_files/test
-              TEST_FILE="drawio_files/test/workflow_dispatch_$(date +%s).drawio"
-              echo '<mxfile><diagram name="Workflow Dispatch">dZHBEoIgEIafhjtCZnZuVpdOHjozgcyQLAvY6uunITOmS4feZf//2YVdIOmmV41q1YEFaMETfgd2JIRQn9C9D/BwgBMK2mjhkL+Cs7x7GG0BdFU3evYrnHjXwcQnqxrNr+oYreGmpKdKg+AIbOTmLze6p4zxDfbijYbjVZN2W8Soxx7LdIIOrVeGrpvEb8WsVAG6CLVt4F8Bdi8A6JL6On6Y+tLwZ+FPXn/+Fw==</diagram></mxfile>' > "$TEST_FILE"
-              # Also find any existing drawio files
-              EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f | head -n 5 | tr '\n' ' ')
+              # Find all existing drawio files
+              EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | tr '\n' ' ')
               if [ -n "$EXISTING_FILES" ]; then
-                CHANGED_FILES="$TEST_FILE $EXISTING_FILES"
+                CHANGED_FILES="$EXISTING_FILES"
+                echo "Found existing drawio files to process: $CHANGED_FILES"
               else
-                CHANGED_FILES="$TEST_FILE"
+                echo "No drawio files found in the repository."
+                CHANGED_FILES=""
               fi
-              echo "Using created test file and found files: [$CHANGED_FILES]"
             fi
           else
-            echo "Unrecognized event type: ${{ github.event_name }}. Creating a test file to process."
-            mkdir -p drawio_files/test
-            TEST_FILE="drawio_files/test/unknown_trigger_$(date +%s).drawio"
-            echo '<mxfile><diagram name="Unknown Trigger">dZHBEoIgEIafhjtCZnZuVpdOHjozgcyQLAvY6uunITOmS4feZf//2YVdIOmmV41q1YEFaMETfgd2JIRQn9C9D/BwgBMK2mjhkL+Cs7x7GG0BdFU3evYrnHjXwcQnqxrNr+oYreGmpKdKg+AIbOTmLze6p4zxDfbijYbjVZN2W8Soxx7LdIIOrVeGrpvEb8WsVAG6CLVt4F8Bdi8A6JL6On6Y+tLwZ+FPXn/+Fw==</diagram></mxfile>' > "$TEST_FILE"
-            CHANGED_FILES="$TEST_FILE"
+            echo "Unrecognized event type: ${{ github.event_name }}. Looking for existing drawio files."
+            # Find existing drawio files
+            EXISTING_FILES=$(find drawio_files -name "*.drawio" -type f ! -path "*/test/*" | tr '\n' ' ')
+            if [ -n "$EXISTING_FILES" ]; then
+              CHANGED_FILES="$EXISTING_FILES"
+              echo "Found existing drawio files to process: $CHANGED_FILES"
+            else
+              echo "No drawio files found in the repository."
+              CHANGED_FILES=""
+            fi
           fi
           echo "Final list of files to process: [$CHANGED_FILES]"
           
