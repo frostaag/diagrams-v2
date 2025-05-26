@@ -1,0 +1,91 @@
+name: Teams Notification for Draw.io Processing
+
+on:
+  workflow_run:
+    workflows: ["Draw.io Files Processing"]
+    types:
+      - completed
+
+jobs:
+  send-notification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set script permissions
+        run: |
+          chmod +x ./scripts/*.sh
+
+      - name: Get workflow run details
+        id: workflow-details
+        run: |
+          echo "conclusion=${{ github.event.workflow_run.conclusion }}" >> $GITHUB_OUTPUT
+          echo "run_id=${{ github.event.workflow_run.id }}" >> $GITHUB_OUTPUT
+          echo "workflow_name=${{ github.event.workflow_run.name }}" >> $GITHUB_OUTPUT
+
+      - name: Send success notification
+        if: steps.workflow-details.outputs.conclusion == 'success'
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
+          NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
+        run: |
+          # Make scripts executable
+          chmod +x ./scripts/send_teams_notification.sh
+          chmod +x ./scripts/success_notification.sh
+          
+          # Debug webhook URL (masked for security)
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            echo "Teams webhook URL is configured (value masked)"
+            echo "TEAMS_WEBHOOK_URL length: ${#TEAMS_WEBHOOK_URL} characters"
+            echo "First 5 characters (masked): ${TEAMS_WEBHOOK_URL:0:5}****"
+          else
+            echo "Teams webhook URL is not configured"
+          fi
+          
+          # Check if webhook URL is available
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            echo "Sending success notification to Teams..."
+            
+            # Run the success notification script
+            ./scripts/success_notification.sh \
+              "$TEAMS_WEBHOOK_URL" \
+              "$GITHUB_REPOSITORY" \
+              "${{ github.event.workflow_run.head_sha }}" \
+              "${{ steps.workflow-details.outputs.workflow_name }}" \
+              "${{ steps.workflow-details.outputs.run_id }}"
+          else
+            echo "::warning::Teams webhook URL not configured. Skipping notification."
+          fi
+
+      - name: Send failure notification
+        if: steps.workflow-details.outputs.conclusion == 'failure'
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
+          NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
+        run: |
+          # Make scripts executable
+          chmod +x ./scripts/send_teams_notification.sh
+          chmod +x ./scripts/failure_notification.sh
+          
+          # Debug webhook URL (masked for security)
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            echo "Teams webhook URL is configured (value masked)"
+          else
+            echo "Teams webhook URL is not configured"
+          fi
+          
+          # Check if webhook URL is available
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            echo "Sending failure notification to Teams..."
+            
+            # Run the failure notification script
+            ./scripts/failure_notification.sh \
+              "$TEAMS_WEBHOOK_URL" \
+              "$GITHUB_REPOSITORY" \
+              "${{ github.event.workflow_run.head_sha }}" \
+              "${{ steps.workflow-details.outputs.workflow_name }}" \
+              "${{ steps.workflow-details.outputs.run_id }}"
+          else
+            echo "::warning::Teams webhook URL not configured. Skipping notification."
+          fi
