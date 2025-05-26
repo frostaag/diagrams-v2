@@ -475,4 +475,80 @@ jobs:
           USE_DIRECT_CONNECTION: "true"
           FORCE_TLS: "true"
 
-      # Teams notification is now handled by a separate workflow
+  # Teams notification job
+  send-teams-notification:
+    needs: process-drawio-files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set script permissions
+        run: |
+          chmod +x ./scripts/*.sh
+
+      - name: Send success notification
+        if: success()
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
+          NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
+        run: |
+          # Make scripts executable
+          chmod +x ./scripts/send_teams_notification.sh
+          chmod +x ./scripts/success_notification.sh
+          
+          # Debug webhook URL (masked for security)
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            echo "Teams webhook URL is configured (value masked)"
+            echo "TEAMS_WEBHOOK_URL length: ${#TEAMS_WEBHOOK_URL} characters"
+            echo "First 5 characters (masked): ${TEAMS_WEBHOOK_URL:0:5}****"
+          else
+            echo "Teams webhook URL is not configured"
+          fi
+          
+          # Check if webhook URL is available
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            echo "Sending success notification to Teams..."
+            
+            # Run the success notification script
+            ./scripts/success_notification.sh \
+              "$TEAMS_WEBHOOK_URL" \
+              "$GITHUB_REPOSITORY" \
+              "$GITHUB_SHA" \
+              "$GITHUB_WORKFLOW" \
+              "$GITHUB_RUN_ID"
+          else
+            echo "::warning::Teams webhook URL not configured. Skipping notification."
+          fi
+
+      - name: Send failure notification
+        if: failure()
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}
+          NOTIFICATION_TITLE: ${{ env.DIAGRAMS_TEAMS_NOTIFICATION_TITLE }}
+        run: |
+          # Make scripts executable
+          chmod +x ./scripts/send_teams_notification.sh
+          chmod +x ./scripts/failure_notification.sh
+          
+          # Debug webhook URL (masked for security)
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            echo "Teams webhook URL is configured (value masked)"
+          else
+            echo "Teams webhook URL is not configured"
+          fi
+          
+          # Check if webhook URL is available
+          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            echo "Sending failure notification to Teams..."
+            
+            # Run the failure notification script
+            ./scripts/failure_notification.sh \
+              "$TEAMS_WEBHOOK_URL" \
+              "$GITHUB_REPOSITORY" \
+              "$GITHUB_SHA" \
+              "$GITHUB_WORKFLOW" \
+              "$GITHUB_RUN_ID"
+          else
+            echo "::warning::Teams webhook URL not configured. Skipping notification."
+          fi
