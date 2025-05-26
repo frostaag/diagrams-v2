@@ -1,4 +1,4 @@
-name: Draw.io Files Processing
+name: Draw.io Files Processing (New Version)
 
 on:
   push:
@@ -10,6 +10,11 @@ on:
         description: 'Specific file to process (leave empty for all files)'
         required: false
         default: ''
+
+# Ensure only one workflow at a time can run to prevent conflicts
+concurrency:
+  group: drawio-processing
+  cancel-in-progress: false
 
 env:
   # Draw.io configuration

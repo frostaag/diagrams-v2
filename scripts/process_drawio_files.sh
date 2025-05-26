@@ -241,7 +241,8 @@ determine_version() {
   
   if [[ -z "$id" ]]; then
     echo "Error: Could not extract ID from $file" >&2
-    return 1
+    echo "1.0"  # Return a default value instead of failing
+    return 0
   fi
   
   # Get the commit message
@@ -282,13 +283,15 @@ determine_version() {
   
   local new_version="${major}.${minor}"
   
-  # Update the version file
+  # Update the version file - ensure there are no duplicate IDs
+  # First remove any existing entry for this ID to avoid duplicates
   if grep -q "^$id:" "$version_file"; then
     echo "Updating existing entry for ID $id to version $new_version" >&2
     # Use platform-independent way to update the version file
     # Create a temporary file for sed output
     local temp_version_file=$(mktemp)
-    sed "s/^$id:.*/$id:$new_version/" "$version_file" > "$temp_version_file"
+    grep -v "^$id:" "$version_file" > "$temp_version_file"
+    echo "$id:$new_version" >> "$temp_version_file"
     mv "$temp_version_file" "$version_file"
   else
     echo "Adding new entry for ID $id with version $new_version" >&2
@@ -315,6 +318,12 @@ update_changelog() {
   
   # Determine version
   local version=$(determine_version "$file")
+  
+  # Ensure we have a version
+  if [[ -z "$version" || "$version" == "" ]]; then
+    echo "Warning: No version obtained for $file, using default 1.0"
+    version="1.0"
+  fi
   
   # Create changelog entry
   local entry="$current_date,$current_time,\"$filename_without_ext\",\"$file\",\"Converted to PNG\",\"$commit_msg\",$version,$commit_hash,\"$author_name\""
