@@ -342,6 +342,7 @@ determine_version() {
 # Function to update changelog
 update_changelog() {
   local file="$1"
+  local conversion_success="${2:-true}"  # Default to true for backward compatibility
   local basename=$(basename "$file")
   local filename_without_ext="${basename%.drawio}"
   
@@ -363,8 +364,14 @@ update_changelog() {
     version="1.0"
   fi
   
+  # Determine action based on conversion success
+  local action="Converted to PNG"
+  if [[ "$conversion_success" != "true" ]]; then
+    action="Conversion failed - placeholder created"
+  fi
+  
   # Create changelog entry
-  local entry="$current_date,$current_time,\"$filename_without_ext\",\"$file\",\"Converted to PNG\",\"$commit_msg\",$version,$commit_hash,\"$author_name\""
+  local entry="$current_date,$current_time,\"$filename_without_ext\",\"$file\",\"$action\",\"$commit_msg\",$version,$commit_hash,\"$author_name\""
   
   # Create lock file for atomic updates
   local lock_file="${CHANGELOG_FILE}.lock"
@@ -493,7 +500,13 @@ main() {
   # Initialize a counter for processed files
   local processed_count=0
   
-  for file in $CHANGED_FILES; do
+  # Convert CHANGED_FILES to an array to properly handle spaces in filenames
+  IFS=$'\n' read -rd '' -a files_array <<< "$CHANGED_FILES"
+  
+  for file in "${files_array[@]}"; do
+    # Skip empty entries
+    [[ -z "$file" ]] && continue
+    
     echo "Processing file: '$file'"
     
     if [[ ! -f "$file" ]]; then
@@ -511,13 +524,14 @@ main() {
     fi
     
     # Convert to PNG
+    local conversion_success=true
     if ! convert_to_png "$processed_file"; then
-      echo "Error: Failed to convert $processed_file to PNG, continuing with next file."
-      continue
+      echo "Warning: Failed to convert $processed_file to PNG, but placeholder was created."
+      conversion_success=false
     fi
     
-    # Update changelog
-    update_changelog "$processed_file"
+    # Update changelog regardless of conversion success (since we create placeholders)
+    update_changelog "$processed_file" "$conversion_success"
     
     # Increment counter
     processed_count=$((processed_count+1))
