@@ -157,11 +157,13 @@ convert_to_png() {
   echo "" >> "$converter_script"
   
   echo "# Method 1: Try with xvfb-run (recommended approach)" >> "$converter_script"
-  echo "if xvfb-run --auto-servernum --server-args=\"-screen 0 1280x1024x24\" drawio -x -f png --scale \"\$scale\" -o \"\$output_file\" \"\$input_file\"; then" >> "$converter_script"
+  echo "if xvfb-run --auto-servernum --server-args=\"-screen 0 1280x1024x24\" drawio -x -f png --scale \"\$scale\" -o \"\$output_file\" \"\$input_file\" 2>&1; then" >> "$converter_script"
   echo "  echo \"✅ Method 1 (xvfb-run) successful\"" >> "$converter_script"
   echo "  exit 0" >> "$converter_script"
   echo "else" >> "$converter_script"
   echo "  echo \"❌ Method 1 (xvfb-run) failed with exit code \$?\"" >> "$converter_script"
+  echo "  echo \"Error output:\"" >> "$converter_script"
+  echo "  xvfb-run --auto-servernum --server-args=\"-screen 0 1280x1024x24\" drawio -x -f png --scale \"\$scale\" -o \"\$output_file\" \"\$input_file\" 2>&1 || true" >> "$converter_script"
   echo "fi" >> "$converter_script"
   echo "" >> "$converter_script"
   echo "# Method 2: Try with export browser display and xvfb" >> "$converter_script"
@@ -169,13 +171,15 @@ convert_to_png() {
   echo "Xvfb :99 -screen 0 1280x1024x24 > /dev/null 2>&1 &" >> "$converter_script"
   echo "XVFB_PID=\$!" >> "$converter_script"
   echo "sleep 2" >> "$converter_script"
-  echo "if drawio -x -f png --scale \"\$scale\" -o \"\$output_file\" \"\$input_file\"; then" >> "$converter_script"
+  echo "if drawio -x -f png --scale \"\$scale\" -o \"\$output_file\" \"\$input_file\" 2>&1; then" >> "$converter_script"
   echo "  echo \"✅ Method 2 (export DISPLAY) successful\"" >> "$converter_script"
   echo "  kill \$XVFB_PID || true" >> "$converter_script"
   echo "  exit 0" >> "$converter_script"
   echo "else" >> "$converter_script"
   echo "  kill \$XVFB_PID || true" >> "$converter_script"
   echo "  echo \"❌ Method 2 (export DISPLAY) failed with exit code \$?\"" >> "$converter_script"
+  echo "  echo \"Error output:\"" >> "$converter_script"
+  echo "  drawio -x -f png --scale \"\$scale\" -o \"\$output_file\" \"\$input_file\" 2>&1 || true" >> "$converter_script"
   echo "fi" >> "$converter_script"
   echo "" >> "$converter_script"
   echo "# All conversion methods failed" >> "$converter_script"
@@ -184,7 +188,7 @@ convert_to_png() {
   
   # Execute the converter script (note: quality parameter removed as it's not valid for PNG)
   echo "Executing conversion script..."
-  if "$converter_script" "$input_file" "$output_png" "$PNG_SCALE"; then
+  if "$converter_script" "$input_file" "$output_png" "$PNG_SCALE" 2>&1; then
     echo "✓ Successfully created $output_png"
     
     # Verify output file exists and has appropriate size
@@ -194,11 +198,18 @@ convert_to_png() {
       
       if [[ $file_size -lt 2 ]]; then
         echo "⚠️ Warning: Output file seems too small, might be corrupted"
+        echo "Treating this as a conversion failure..."
+        rm -f "$output_png"  # Remove the corrupted file
+        create_placeholder_png "$input_file" "$output_png"
+        rm -f "$converter_script"
+        return 1
       fi
     else
       echo "⚠️ Warning: Output file wasn't created or is empty"
       # Create placeholder since we didn't get a proper output
       create_placeholder_png "$input_file" "$output_png"
+      rm -f "$converter_script"
+      return 1
     fi
     
     rm -f "$converter_script"
@@ -207,7 +218,7 @@ convert_to_png() {
     local exit_code=$?
     echo "✗ Conversion failed with exit code $exit_code"
     
-    # If conversion failed, create a placeholder PNG
+    # If conversion failed, create a placeholder PNG or error file
     create_placeholder_png "$input_file" "$output_png"
     
     rm -f "$converter_script"
@@ -225,12 +236,15 @@ create_placeholder_png() {
   
   # Try using ImageMagick if available
   if command -v convert >/dev/null 2>&1; then
-    convert -size 800x600 xc:white \
+    if convert -size 800x600 xc:white \
       -fill red \
       -gravity Center \
       -pointsize 24 \
       -annotate 0 "Error converting diagram:\n$(basename "$input_file")\n\nPlease check the diagram file for errors." \
-      "$output_png" && echo "✓ Created placeholder PNG with ImageMagick" && return 0
+      "$output_png"; then
+      echo "✓ Created placeholder PNG with ImageMagick"
+      return 0
+    fi
   fi
   
   # If ImageMagick failed or is not available, try using HTML/CSS with wkhtmltoimage
@@ -243,14 +257,18 @@ create_placeholder_png() {
     echo "<p>Please check the diagram file for errors.</p>" >> "$temp_html"
     echo "</div></body></html>" >> "$temp_html"
     
-    wkhtmltoimage "$temp_html" "$output_png" && echo "✓ Created placeholder PNG with wkhtmltoimage" && rm -f "$temp_html" && return 0
+    if wkhtmltoimage "$temp_html" "$output_png"; then
+      echo "✓ Created placeholder PNG with wkhtmltoimage"
+      rm -f "$temp_html"
+      return 0
+    fi
     rm -f "$temp_html"
   fi
   
-  # Last resort: create an empty file with error note
-  echo "Could not create placeholder PNG. Creating empty file with .error extension"
+  # Last resort: create an error file instead of empty PNG
+  echo "Could not create placeholder PNG. Creating error file."
   echo "Failed to convert $(basename "$input_file") at $(date)" > "${output_png}.error"
-  touch "$output_png"
+  # Don't create empty PNG file - just the error file
   return 1
 }
 
