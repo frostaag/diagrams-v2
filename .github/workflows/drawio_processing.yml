@@ -105,7 +105,7 @@ jobs:
           # Test that the conversion works
           echo "<mxfile><diagram name='Test'>dZHBDoMgDIafhrtC5uLcnJs7efBMRCZkKGhYts3HTwXmkm1JL037f/1pKcQ0b/ea1cWBOSghfVcUYiZk6McpySiDCvcKVkVFcW3jPT4vuHgBwkmIbYu9UxL8IGuUDiOTDDkIe2Bju4SM+UOw3EF6ngQ7vSLbIukzznboLJhlzonekqklOct5qQM/rTl9Cdtdpzt7modNwLwo+hX88B6Ulu37BfkH</diagram></mxfile>" > /tmp/test.drawio
           mkdir -p /tmp/output
-          if xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio -x -f png --scale 2 --quality 100 -o /tmp/output/test.png /tmp/test.drawio; then
+          if xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" drawio -x -f png --scale 2 -o /tmp/output/test.png /tmp/test.drawio; then
             echo "DrawIO conversion test successful!"
           else
             echo "DrawIO conversion test failed, but continuing anyway. May need troubleshooting during actual conversions."

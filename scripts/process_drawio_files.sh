@@ -9,21 +9,21 @@ PNG_FILES_DIR="png_files"
 COUNTER_FILE="${DIAGRAMS_COUNTER_FILE:-${DRAWIO_FILES_DIR}/.counter}"
 CHANGELOG_FILE="${DIAGRAMS_CHANGELOG_FILE:-${PNG_FILES_DIR}/CHANGELOG.csv}"
 PNG_SCALE="${DIAGRAMS_PNG_SCALE:-${PNG_SCALE:-2.0}}"
-PNG_QUALITY="${DIAGRAMS_PNG_QUALITY:-${PNG_QUALITY:-500}}"
+PNG_QUALITY="${DIAGRAMS_PNG_QUALITY:-${PNG_QUALITY:-100}}"
 SPECIFIC_FILE="${SPECIFIC_FILE:-}"
 
 # Function to detect changed files
 detect_changed_files() {
-  local changed_files=""
-  
   # Check if CHANGED_FILES environment variable is set (from GitHub Actions)
   if [[ -n "$CHANGED_FILES" ]]; then
     echo "Using CHANGED_FILES from environment: $CHANGED_FILES"
-    changed_files="$CHANGED_FILES"
+    # Make sure CHANGED_FILES is available globally
+    export CHANGED_FILES
     return
   elif [[ -n "$SPECIFIC_FILE" ]]; then
     echo "Processing specific file: $SPECIFIC_FILE"
-    changed_files="$SPECIFIC_FILE"
+    export CHANGED_FILES="$SPECIFIC_FILE"
+    return
   else
     # Create temporary file to store results
     local temp_diff_file=$(mktemp)
@@ -54,17 +54,19 @@ detect_changed_files() {
     fi
     
     # Get the files from the temp file
-    changed_files=$(cat "$temp_diff_file" | tr '\n' ' ')
+    local changed_files=$(cat "$temp_diff_file" | tr '\n' ' ')
     rm -f "$temp_diff_file"
     
     if [[ -z "$changed_files" ]]; then
       echo "No draw.io files found by any method."
-      exit 0
+      export CHANGED_FILES=""
+      return
     fi
+    
+    export CHANGED_FILES="$changed_files"
   fi
   
-  echo "Changed files: $changed_files"
-  echo "CHANGED_FILES=$changed_files" >> $GITHUB_ENV
+  echo "Changed files: $CHANGED_FILES"
 }
 
 # Function to assign IDs to new files
@@ -125,6 +127,25 @@ convert_to_png() {
   echo "Output file: $output_png"
   echo "Scale: $PNG_SCALE, Quality: $PNG_QUALITY"
   
+  # Ensure input file exists and is readable
+  if [[ ! -f "$input_file" ]]; then
+    echo "❌ Error: Input file $input_file does not exist"
+    create_placeholder_png "$input_file" "$output_png"
+    return 1
+  fi
+  
+  if [[ ! -r "$input_file" ]]; then
+    echo "❌ Error: Input file $input_file is not readable"
+    create_placeholder_png "$input_file" "$output_png"
+    return 1
+  fi
+  
+  # Check if input file has content
+  local file_size=$(wc -c < "$input_file")
+  if [[ $file_size -lt 100 ]]; then
+    echo "⚠️ Warning: Input file seems very small ($file_size bytes), might be corrupted"
+  fi
+  
   # Create a temporary conversion script for better error handling
   local converter_script=$(mktemp)
   echo "#!/bin/bash" > "$converter_script"
@@ -132,12 +153,11 @@ convert_to_png() {
   echo "input_file=\"\$1\"" >> "$converter_script"
   echo "output_file=\"\$2\"" >> "$converter_script"
   echo "scale=\"\$3\"" >> "$converter_script"
-  echo "quality=\"\$4\"" >> "$converter_script"
-  echo "echo \"Converting: \$input_file to \$output_file with scale=\$scale quality=\$quality\"" >> "$converter_script"
+  echo "echo \"Converting: \$input_file to \$output_file with scale=\$scale\"" >> "$converter_script"
   echo "" >> "$converter_script"
   
-  echo "# Method 1: Try with xvfb-run" >> "$converter_script"
-  echo "if xvfb-run --auto-servernum --server-args=\"-screen 0 1280x1024x24\" drawio -x -f png --scale \"\$scale\" --quality \"\$quality\" -o \"\$output_file\" \"\$input_file\"; then" >> "$converter_script"
+  echo "# Method 1: Try with xvfb-run (recommended approach)" >> "$converter_script"
+  echo "if xvfb-run --auto-servernum --server-args=\"-screen 0 1280x1024x24\" drawio -x -f png --scale \"\$scale\" -o \"\$output_file\" \"\$input_file\"; then" >> "$converter_script"
   echo "  echo \"✅ Method 1 (xvfb-run) successful\"" >> "$converter_script"
   echo "  exit 0" >> "$converter_script"
   echo "else" >> "$converter_script"
@@ -149,7 +169,7 @@ convert_to_png() {
   echo "Xvfb :99 -screen 0 1280x1024x24 > /dev/null 2>&1 &" >> "$converter_script"
   echo "XVFB_PID=\$!" >> "$converter_script"
   echo "sleep 2" >> "$converter_script"
-  echo "if drawio -x -f png --scale \"\$scale\" --quality \"\$quality\" -o \"\$output_file\" \"\$input_file\"; then" >> "$converter_script"
+  echo "if drawio -x -f png --scale \"\$scale\" -o \"\$output_file\" \"\$input_file\"; then" >> "$converter_script"
   echo "  echo \"✅ Method 2 (export DISPLAY) successful\"" >> "$converter_script"
   echo "  kill \$XVFB_PID || true" >> "$converter_script"
   echo "  exit 0" >> "$converter_script"
@@ -162,9 +182,9 @@ convert_to_png() {
   echo "exit 1" >> "$converter_script"
   chmod +x "$converter_script"
   
-  # Execute the converter script
+  # Execute the converter script (note: quality parameter removed as it's not valid for PNG)
   echo "Executing conversion script..."
-  if "$converter_script" "$input_file" "$output_png" "$PNG_SCALE" "$PNG_QUALITY"; then
+  if "$converter_script" "$input_file" "$output_png" "$PNG_SCALE"; then
     echo "✓ Successfully created $output_png"
     
     # Verify output file exists and has appropriate size
