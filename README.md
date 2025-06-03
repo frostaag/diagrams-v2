@@ -1,79 +1,135 @@
 # Draw.io Files Processing Workflow V2
 
-This repository contains a GitHub Actions workflow for processing Draw.io diagram files according to the V2 specification.
+This repository contains a **simplified and robust** GitHub Actions workflow for processing Draw.io diagram files. The V2 implementation focuses on reliability, maintainability, and high-quality PNG output.
 
-## Features
+## ✨ Features
 
-- Automatically detects new and modified draw.io files
-- Assigns unique IDs to new files
-- Converts draw.io files to high-quality PNG format
-- Maintains a comprehensive changelog
-- Uploads the changelog to SharePoint
-- Sends notifications to Microsoft Teams
+- **Automatic Processing**: Detects and processes new/modified Draw.io files
+- **Smart ID Assignment**: Assigns unique sequential IDs to new files
+- **High-Quality PNG Output**: Converts diagrams to PNG format with optimal settings
+- **Comprehensive Changelog**: Tracks all changes with versioning information
+- **SharePoint Integration**: Automatically uploads changelog to SharePoint
+- **Teams Notifications**: Sends processing status to Microsoft Teams
+- **Clean & Simple**: Streamlined codebase focused on core functionality
 
-## Workflow Overview
+## 🚀 What's New in V2
 
-When a new draw.io file is committed or modified, the workflow will:
+- **Simplified Architecture**: Removed complex fallback mechanisms and unnecessary scripts
+- **Improved PNG Conversion**: Better error handling and placeholder creation for failed conversions
+- **Robust File Detection**: Simplified Git-based file detection logic
+- **Cleaner Codebase**: Moved legacy scripts to archive, keeping only essential functionality
+- **Better Error Handling**: Clear error messages and graceful failure handling
 
-1. Detect the changed files
-2. Assign IDs to new files if needed
-3. Convert the draw.io files to PNG format
-4. Update the changelog with version information
-5. Upload the changelog to SharePoint
-6. Send a notification to Microsoft Teams
+## 📁 Directory Structure
 
-## Directory Structure
+```
+drawio_files/          # Original Draw.io diagram files
+├── .counter           # ID counter for new files
+└── *.drawio           # Draw.io diagram files
 
-- `drawio_files/`: Contains the original draw.io diagram files
-- `png_files/`: Contains the generated PNG files and the changelog
-- `scripts/`: Contains the processing scripts
-- `.github/workflows/`: Contains the GitHub Actions workflow definition
+png_files/             # Generated PNG files and metadata
+├── CHANGELOG.csv      # Processing changelog
+├── .versions          # Version tracking file
+└── *.png              # Generated PNG diagrams
 
-## File Naming and IDs
+scripts/               # Processing scripts
+├── process_drawio_files_v2.sh  # Main processing script
+└── archive/           # Legacy scripts (archived)
 
-- New files without an ID will be assigned a sequential 3-digit ID
-- Files that already have an ID pattern (e.g., "Diagram (001).drawio") will keep their ID
-- Files with simple numeric names (e.g., "70.drawio") will be preserved as-is
+.github/workflows/     # GitHub Actions workflow
+└── drawio_processing.yml       # Main workflow file
+```
 
-## Versioning
+## 🔧 How It Works
 
-- For commit messages containing "added" or "new" → major version increment (1.0, 2.0, etc.)
-- For other commit messages → minor version increment (1.1, 1.2, etc.)
+### 1. File Detection
+The workflow uses Git to detect changed Draw.io files:
+- **Push events**: Compares current commit with previous commit
+- **Manual triggers**: Processes specific files or all files
+- **Initial commits**: Processes all available files
 
-## Manual Processing
+### 2. ID Assignment
+- New files without IDs get sequential 3-digit IDs: `filename (001).drawio`
+- Files with numeric names (e.g., `70.drawio`) are preserved as-is
+- Existing files with IDs are not renamed
 
-You can manually process specific draw.io files by triggering the workflow from the GitHub Actions tab and providing the file path.
+### 3. PNG Conversion
+- Uses Draw.io's built-in PNG export with high-quality settings
+- **Scale**: 2.0x for crisp diagrams
+- **Quality**: Maximum quality for professional output
+- **Fallback**: Creates error placeholders for failed conversions
 
-## SharePoint Integration
+### 4. Versioning
+- **Major version** (e.g., 2.0): For commit messages containing "added" or "new"
+- **Minor version** (e.g., 1.1): For updates and modifications
+- Versions are tracked per file ID in `.versions` file
 
-The workflow uploads the changelog to SharePoint using the Microsoft Graph API. The necessary credentials should be configured as repository secrets:
+### 5. Changelog Management
+Maintains a comprehensive CSV changelog with:
+- Date, Time, Diagram name, File path
+- Action taken, Commit message, Version
+- Commit hash, Author name
 
-- `SHAREPOINT_CLIENT_ID`
-- `SHAREPOINT_CLIENT_SECRET`
-- `SHAREPOINT_TENANT_ID`
-- `SHAREPOINT_SITE_ID`
+## 🎯 File Naming and IDs
 
-## Teams Notifications
+### New Files
+- `my-diagram.drawio` → `my-diagram (001).drawio`
+- `flowchart.drawio` → `flowchart (002).drawio`
 
-The workflow sends notifications to Microsoft Teams after processing, including:
-- Success notifications with a list of processed diagrams
-- Failure notifications with error details
+### Preserved Files
+- `70.drawio` → remains `70.drawio` (numeric names preserved)
+- `existing (005).drawio` → keeps existing ID
 
-To enable Teams notifications, add this secret to your repository:
-- `DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK`: The Microsoft Teams webhook URL
+## 📈 Versioning Logic
 
-## Requirements
+| Commit Message | Version Change | Example |
+|----------------|----------------|---------|
+| "Added new flow diagram" | Major increment | 1.0 → 2.0 |
+| "Update user journey" | Minor increment | 1.2 → 1.3 |
+| "Fixed typo in diagram" | Minor increment | 2.1 → 2.2 |
 
-- DrawIO Desktop version 26.2.2 (configurable in the workflow)
-- Git with commit history
+## 🔄 Manual Processing
 
-## Configuration
+You can manually trigger the workflow:
 
-You can configure various aspects of the workflow by modifying the environment variables in the workflow file:
+1. Go to **Actions** tab in GitHub
+2. Select **Draw.io Files Processing V2**
+3. Click **Run workflow**
+4. Optionally specify a specific file to process
+
+## ☁️ SharePoint Integration
+
+The workflow automatically uploads the changelog to SharePoint using Microsoft Graph API.
+
+### Required Repository Secrets
+- `DIAGRAMS_SHAREPOINT_CLIENTSECRET`: SharePoint app client secret
+
+### Required Repository Variables  
+- `DIAGRAMS_SHAREPOINT_CLIENT_ID`: SharePoint app client ID
+- `DIAGRAMS_SHAREPOINT_TENANT_ID`: Azure tenant ID
+
+The changelog is uploaded to: `Documents/Diagrams/Diagrams_Changelog.csv`
+
+## 📢 Teams Notifications
+
+Optional Teams notifications are sent after processing.
+
+### Setup
+Add this repository secret:
+- `DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK`: Microsoft Teams webhook URL
+
+Notifications include:
+- Processing status (success/failure)
+- Number of files processed/failed
+- Links to view the workflow run
+
+## ⚙️ Configuration
+
+Customize the workflow by editing environment variables in `.github/workflows/drawio_processing.yml`:
 
 ```yaml
 env:
-  # Draw.io configuration
+  # Draw.io settings
   DRAWIO_VERSION: "26.2.2"
   PNG_SCALE: "2.0"
   PNG_QUALITY: "100"
@@ -82,10 +138,66 @@ env:
   CHANGELOG_FILE: "png_files/CHANGELOG.csv"
   COUNTER_FILE: "drawio_files/.counter"
   
-  # SharePoint configuration
+  # SharePoint settings
   SHAREPOINT_FOLDER: "Diagrams"
   SHAREPOINT_OUTPUT_FILENAME: "Diagrams_Changelog.csv"
-  
-  # Teams notification configuration
-  TEAMS_NOTIFICATION_TITLE: "Draw.io Diagrams Processing Update"
 ```
+
+## 🛠️ Requirements
+
+- **Draw.io Desktop**: Version 26.2.2 (automatically installed in workflow)
+- **ImageMagick**: For error placeholder creation
+- **Git**: For file detection and change tracking
+- **Ubuntu Latest**: GitHub Actions runner environment
+
+## 🚦 Troubleshooting
+
+### Common Issues
+
+1. **PNG files are 0 bytes**
+   - Check if Draw.io files are valid XML format
+   - Verify Draw.io installation in workflow logs
+
+2. **Files not being processed**
+   - Ensure files are in `drawio_files/` directory
+   - Check that files have `.drawio` extension
+   - Verify Git changes are committed
+
+3. **SharePoint upload fails**
+   - Verify client ID and secret are correct
+   - Check that the SharePoint site and folder exist
+   - Ensure proper permissions are granted to the app
+
+4. **Teams notifications not working**
+   - Verify webhook URL is correct and active
+   - Check webhook permissions in Teams
+
+### Manual Testing
+
+Test the processing script locally:
+```bash
+cd /path/to/repository
+SPECIFIC_FILE="drawio_files/test.drawio" ./scripts/process_drawio_files_v2.sh
+```
+
+## 📜 Migration from V1
+
+The V2 implementation is a complete rewrite focused on simplicity and reliability:
+
+- **Removed**: Complex fallback mechanisms, multiple SharePoint scripts, verbose error handling
+- **Simplified**: File detection, ID assignment, PNG conversion process  
+- **Improved**: Error handling, placeholder creation, changelog management
+- **Archived**: Legacy scripts moved to `scripts/archive/` for reference
+
+## 🤝 Contributing
+
+1. Follow the V2 specification in `workflow_v2_specification.md`
+2. Test changes locally before committing
+3. Update documentation for any configuration changes
+4. Keep the codebase simple and maintainable
+
+---
+
+**Version**: 2.0  
+**Status**: Production Ready  
+**Last Updated**: June 2025
