@@ -53,17 +53,17 @@ detect_changed_files() {
       cat "$temp_diff_file"
     fi
     
-    # Get the files from the temp file
-    local changed_files=$(cat "$temp_diff_file" | tr '\n' ' ')
+    # Get the files from the temp file - preserve newlines for proper array handling
+    local changed_files_content=$(cat "$temp_diff_file")
     rm -f "$temp_diff_file"
     
-    if [[ -z "$changed_files" ]]; then
+    if [[ -z "$changed_files_content" ]]; then
       echo "No draw.io files found by any method."
       export CHANGED_FILES=""
       return
     fi
     
-    export CHANGED_FILES="$changed_files"
+    export CHANGED_FILES="$changed_files_content"
   fi
   
   echo "Changed files: $CHANGED_FILES"
@@ -100,7 +100,11 @@ assign_ids() {
   
   echo "Assigned ID $new_counter to $basename -> $new_filename"
   # Update the file variable for further processing
-  echo "PROCESSED_FILE=$new_filepath" >> $GITHUB_ENV
+  if [[ -n "$GITHUB_ENV" ]]; then
+    echo "PROCESSED_FILE=$new_filepath" >> $GITHUB_ENV
+  fi
+  # Also set it as an exported variable for local runs
+  export PROCESSED_FILE="$new_filepath"
 }
 
 # Function to extract ID from filename
@@ -501,7 +505,11 @@ main() {
   local processed_count=0
   
   # Convert CHANGED_FILES to an array to properly handle spaces in filenames
-  IFS=$'\n' read -rd '' -a files_array <<< "$CHANGED_FILES"
+  # Read each line as a separate array element
+  local files_array=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && files_array+=("$line")
+  done <<< "$CHANGED_FILES"
   
   for file in "${files_array[@]}"; do
     # Skip empty entries
