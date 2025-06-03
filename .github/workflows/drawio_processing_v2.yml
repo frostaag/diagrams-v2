@@ -1,4 +1,4 @@
-name: Draw.io Files Processing V2 (Legacy - Use V2 Clean)
+name: Draw.io Files Processing V2 (Legacy - Deprecated)
 
 on:
   # Disabled - use drawio_processing_v2_clean.yml instead

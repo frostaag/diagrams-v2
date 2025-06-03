@@ -43,11 +43,6 @@ log_error() {
     log "❌ $*"
 }
 
-# Ensure we never leak log messages to stdout by using explicit redirection
-safe_log() {
-    echo "$(date '+%H:%M:%S') $*" >&2
-}
-
 # ===========================
 # SETUP FUNCTIONS
 # ===========================

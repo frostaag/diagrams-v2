@@ -1,0 +1,260 @@
+name: Draw.io Files Processing V2
+
+on:
+  push:
+    paths:
+      - 'drawio_files/**/*.drawio'
+  workflow_dispatch:
+    inputs:
+      specific_file:
+        description: 'Specific file to process (leave empty for all files)'
+        required: false
+        default: ''
+      cleanup_mode:
+        description: 'Clean up duplicates and regenerate missing PNGs'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+concurrency:
+  group: drawio-processing-v2
+  cancel-in-progress: false
+
+env:
+  # Draw.io configuration
+  DRAWIO_VERSION: "26.2.2"
+  PNG_SCALE: "2.0"
+  PNG_QUALITY: "100"
+  
+  # File paths
+  CHANGELOG_FILE: "png_files/CHANGELOG.csv"
+  COUNTER_FILE: "drawio_files/.counter"
+  VERSION_FILE: "png_files/.versions"
+  
+  # SharePoint configuration
+  SHAREPOINT_FOLDER: "Diagrams"
+  SHAREPOINT_OUTPUT_FILENAME: "Diagrams_Changelog.csv"
+  SHAREPOINT_SITE_ID: "e39939c2-992f-47cc-8b32-20aa466d71f4"
+  SHAREPOINT_BASE_DRIVE_ID: "21e1e0f0-9247-45ab-9f8c-1d50c5c077db"
+
+permissions:
+  contents: write
+
+jobs:
+  process-drawio-files:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Draw.io Desktop
+        run: |
+          echo "📦 Installing Draw.io ${{ env.DRAWIO_VERSION }}"
+          
+          # Update package list and install dependencies
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget xvfb imagemagick \
+            libgbm1 libnspr4 libnss3 libxss1 libxtst6 \
+            libgtk-3-0 libx11-xcb1 libdrm2 libatk-bridge2.0-0 libsecret-1-0
+          
+          # Download and install Draw.io
+          wget -q "https://github.com/jgraph/drawio-desktop/releases/download/v${{ env.DRAWIO_VERSION }}/drawio-amd64-${{ env.DRAWIO_VERSION }}.deb"
+          sudo apt-get install -y "./drawio-amd64-${{ env.DRAWIO_VERSION }}.deb"
+          
+          # Verify installation
+          echo "🔍 Verifying Draw.io installation..."
+          xvfb-run --auto-servernum drawio --version || echo "Version check failed, but continuing"
+          
+          # Verify ImageMagick
+          echo "🔍 Verifying ImageMagick..."
+          convert --version | head -1
+
+      - name: Process Draw.io files
+        run: |
+          echo "🚀 Starting file processing..."
+          
+          # Make script executable
+          chmod +x ./scripts/process_drawio_files_v2.sh
+          
+          # Set environment variables
+          export DIAGRAMS_COUNTER_FILE="${{ env.COUNTER_FILE }}"
+          export DIAGRAMS_CHANGELOG_FILE="${{ env.CHANGELOG_FILE }}"
+          export DIAGRAMS_PNG_SCALE="${{ env.PNG_SCALE }}"
+          export DIAGRAMS_PNG_QUALITY="${{ env.PNG_QUALITY }}"
+          export SPECIFIC_FILE="${{ github.event.inputs.specific_file }}"
+          
+          # Run the processing script
+          ./scripts/process_drawio_files_v2.sh
+
+      - name: Commit changes
+        run: |
+          echo "💾 Committing changes..."
+          
+          # Configure Git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Add all changes
+          git add -A
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "📝 No changes to commit"
+          else
+            # Create commit message
+            COMMIT_MSG="Process Draw.io files and update changelog [skip ci]"
+            
+            # Add processing statistics to commit message
+            if [[ -f "png_files/CHANGELOG.csv" ]]; then
+              RECENT_ENTRIES=$(tail -n +2 "png_files/CHANGELOG.csv" | wc -l)
+              COMMIT_MSG="$COMMIT_MSG - $RECENT_ENTRIES total entries"
+            fi
+            
+            # Commit changes
+            git commit -m "$COMMIT_MSG"
+            
+            # Push changes
+            echo "📤 Pushing changes..."
+            git push
+            
+            echo "✅ Changes committed and pushed successfully"
+          fi
+
+      - name: Upload changelog to SharePoint
+        if: success()
+        continue-on-error: true
+        run: |
+          echo "📤 Uploading changelog to SharePoint..."
+          
+          # Skip if changelog doesn't exist
+          if [[ ! -f "${{ env.CHANGELOG_FILE }}" ]]; then
+            echo "⚠️ Changelog file not found, skipping SharePoint upload"
+            exit 0
+          fi
+          
+          # Get access token
+          ACCESS_TOKEN=$(curl -s -X POST \
+            "https://login.microsoftonline.com/${{ vars.DIAGRAMS_SHAREPOINT_TENANT_ID }}/oauth2/v2.0/token" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "client_id=${{ vars.DIAGRAMS_SHAREPOINT_CLIENT_ID }}" \
+            -d "client_secret=${{ secrets.DIAGRAMS_SHAREPOINT_CLIENTSECRET }}" \
+            -d "scope=https://graph.microsoft.com/.default" \
+            -d "grant_type=client_credentials" | \
+            jq -r '.access_token')
+          
+          if [[ "$ACCESS_TOKEN" == "null" || -z "$ACCESS_TOKEN" ]]; then
+            echo "❌ Failed to get SharePoint access token"
+            exit 1
+          fi
+          
+          # Upload file
+          curl -s -X PUT \
+            "https://graph.microsoft.com/v1.0/drives/${{ env.SHAREPOINT_BASE_DRIVE_ID }}/root:/${{ env.SHAREPOINT_FOLDER }}/${{ env.SHAREPOINT_OUTPUT_FILENAME }}:/content" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: text/csv" \
+            --data-binary @"${{ env.CHANGELOG_FILE }}" \
+            -o /tmp/upload_response.json
+          
+          # Check upload result
+          if jq -e '.id' /tmp/upload_response.json >/dev/null 2>&1; then
+            echo "✅ Successfully uploaded changelog to SharePoint"
+          else
+            echo "❌ Failed to upload changelog to SharePoint"
+            cat /tmp/upload_response.json
+            exit 1
+          fi
+
+      - name: Generate workflow summary
+        if: always()
+        run: |
+          echo "## 📊 Draw.io Processing Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Count files
+          TOTAL_DRAWIO=$(find drawio_files -name "*.drawio" -type f | wc -l)
+          TOTAL_PNG=$(find png_files -name "*.png" -type f | wc -l)
+          
+          echo "### 📈 Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total Draw.io files**: $TOTAL_DRAWIO" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total PNG files**: $TOTAL_PNG" >> $GITHUB_STEP_SUMMARY
+          echo "- **Processing status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          
+          # Show recent changelog entries
+          if [[ -f "${{ env.CHANGELOG_FILE }}" ]]; then
+            RECENT_COUNT=$(tail -n +2 "${{ env.CHANGELOG_FILE }}" | tail -5 | wc -l)
+            if [[ $RECENT_COUNT -gt 0 ]]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 📋 Recent Changes" >> $GITHUB_STEP_SUMMARY
+              echo "| Diagram | Version | Action |" >> $GITHUB_STEP_SUMMARY
+              echo "|---------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+              
+              tail -n +2 "${{ env.CHANGELOG_FILE }}" | tail -5 | while IFS=, read -r date time diagram file action message version hash author; do
+                # Clean up the values (remove quotes)
+                diagram=$(echo "$diagram" | tr -d '"')
+                version=$(echo "$version" | tr -d '"')
+                action=$(echo "$action" | tr -d '"')
+                echo "| $diagram | $version | $action |" >> $GITHUB_STEP_SUMMARY
+              done
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚙️ Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Draw.io Version**: ${{ env.DRAWIO_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **PNG Scale**: ${{ env.PNG_SCALE }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **PNG Quality**: ${{ env.PNG_QUALITY }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Send Teams notification
+        if: always() && vars.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK
+        continue-on-error: true
+        run: |
+          echo "📢 Sending Teams notification..."
+          
+          # Determine status and color
+          if [[ "${{ job.status }}" == "success" ]]; then
+            STATUS="✅ Success"
+            COLOR="good"
+          else
+            STATUS="❌ Failed"
+            COLOR="danger"
+          fi
+          
+          # Count files
+          TOTAL_DRAWIO=$(find drawio_files -name "*.drawio" -type f | wc -l)
+          TOTAL_PNG=$(find png_files -name "*.png" -type f | wc -l)
+          
+          # Create notification
+          curl -X POST "${{ vars.DIAGRAMS_TEAMS_NOTIFICATION_WEBHOOK }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"@type\": \"MessageCard\",
+              \"@context\": \"https://schema.org/extensions\",
+              \"summary\": \"Draw.io Processing $STATUS\",
+              \"themeColor\": \"$COLOR\",
+              \"title\": \"📊 Draw.io Files Processing V2\",
+              \"text\": \"Processing completed with status: $STATUS\",
+              \"sections\": [{
+                \"facts\": [
+                  {\"name\": \"📁 Total Draw.io files\", \"value\": \"$TOTAL_DRAWIO\"},
+                  {\"name\": \"🖼️ Total PNG files\", \"value\": \"$TOTAL_PNG\"},
+                  {\"name\": \"🔄 Workflow run\", \"value\": \"#${{ github.run_number }}\"}
+                ]
+              }],
+              \"potentialAction\": [{
+                \"@type\": \"OpenUri\",
+                \"name\": \"View Workflow Run\",
+                \"targets\": [{
+                  \"os\": \"default\",
+                  \"uri\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+                }]
+              }]
+            }"
+          
+          echo "✅ Teams notification sent"

@@ -14,11 +14,12 @@ This repository contains a **simplified and robust** GitHub Actions workflow for
 
 ## 🚀 What's New in V2
 
-- **Simplified Architecture**: Removed complex fallback mechanisms and unnecessary scripts
+- **Single Clean Script**: Consolidated processing logic in `process_drawio_files_v2.sh`
 - **Improved PNG Conversion**: Better error handling and placeholder creation for failed conversions
 - **Robust File Detection**: Simplified Git-based file detection logic
 - **Cleaner Codebase**: Moved legacy scripts to archive, keeping only essential functionality
 - **Better Error Handling**: Clear error messages and graceful failure handling
+- **Fixed Changelog Issues**: Prevented log message leakage into changelog entries
 
 ## 📁 Directory Structure
 
@@ -33,11 +34,11 @@ png_files/             # Generated PNG files and metadata
 └── *.png              # Generated PNG diagrams
 
 scripts/               # Processing scripts
-├── process_drawio_files_v2.sh  # Main processing script
+├── process_drawio_files_v2.sh  # Main processing script (clean V2)
 └── archive/           # Legacy scripts (archived)
 
 .github/workflows/     # GitHub Actions workflow
-└── drawio_processing.yml       # Main workflow file
+└── drawio_processing_v2_clean.yml  # Main workflow file
 ```
 
 ## 🔧 How It Works
