@@ -1,9 +1,10 @@
-name: Draw.io Files Processing
+name: Draw.io Files Processing (LEGACY - DISABLED)
+
+# THIS WORKFLOW IS DISABLED - USE drawio_processing_v2_clean.yml INSTEAD
+# Triggers removed to prevent conflicts with the new simplified workflow
 
 on:
-  push:
-    paths:
-      - 'drawio_files/**/*.drawio'
+  # Disabled - no triggers
   workflow_dispatch:
     inputs:
       specific_file:
