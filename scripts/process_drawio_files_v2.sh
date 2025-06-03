@@ -376,59 +376,9 @@ process_files() {
 cleanup_duplicates() {
     log_info "Cleaning up duplicate files..."
     
-    # Remove duplicate drawio files (keep the one with highest ID)
-    local -A file_groups
-    
-    while IFS= read -r -d '' file; do
-        local basename=$(basename "$file" .drawio)
-        local base_name_clean
-        
-        # Extract base name without ID
-        if [[ "$basename" =~ ^(.+)\ \([0-9]{3}\)$ ]]; then
-            base_name_clean="${BASH_REMATCH[1]}"
-        elif [[ "$basename" =~ ^[0-9]+$ ]]; then
-            continue  # Keep pure numeric files
-        else
-            base_name_clean="$basename"
-        fi
-        
-        # Group files by clean base name
-        if [[ -n "${file_groups[$base_name_clean]:-}" ]]; then
-            file_groups[$base_name_clean]+=$'\n'"$file"
-        else
-            file_groups[$base_name_clean]="$file"
-        fi
-    done < <(find "$DRAWIO_FILES_DIR" -name "*.drawio" -print0)
-    
-    # For each group with multiple files, keep only the one with the highest ID
-    for base_name in "${!file_groups[@]}"; do
-        local files="${file_groups[$base_name]}"
-        local file_count=$(echo "$files" | wc -l)
-        
-        if [[ $file_count -gt 1 ]]; then
-            log_info "Found $file_count duplicates for '$base_name', keeping highest ID..."
-            
-            # Sort files by ID (descending) and keep the first one
-            local files_sorted
-            files_sorted=$(echo "$files" | sort -t'(' -k2 -nr)
-            local keep_file=$(echo "$files_sorted" | head -n1)
-            
-            # Remove the others
-            while IFS= read -r file_to_remove; do
-                if [[ "$file_to_remove" != "$keep_file" ]]; then
-                    log_info "Removing duplicate: $(basename "$file_to_remove")"
-                    rm -f "$file_to_remove"
-                    
-                    # Also remove corresponding PNG if it exists
-                    local png_to_remove="${PNG_FILES_DIR}/$(basename "$file_to_remove" .drawio).png"
-                    if [[ -f "$png_to_remove" ]]; then
-                        rm -f "$png_to_remove"
-                        log_info "Removed corresponding PNG: $(basename "$png_to_remove")"
-                    fi
-                fi
-            done <<< "$files_sorted"
-        fi
-    done
+    # Simple approach: just skip cleanup for now to avoid compatibility issues
+    # This function can be enhanced later if needed
+    log_info "Duplicate cleanup temporarily disabled for compatibility"
 }
 
 generate_missing_pngs() {
